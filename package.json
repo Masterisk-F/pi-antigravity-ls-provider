@@ -1,0 +1,53 @@
+{
+  "name": "pi-antigravity-ls-provider",
+  "version": "0.1.0",
+  "description": "pi provider extension driving the Antigravity Language Server directly (no agy/ACP): all pi tools exposed via MCP, Antigravity built-in tools disabled, pi-tree-aware conversation rewind",
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension",
+    "provider",
+    "antigravity"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./index.ts",
+  "files": [
+    "index.ts",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/"
+  },
+  "dependencies": {
+    "antigravity-client": "github:jkfujinami/antigravity-client#abb4afc2e9d1316b2b1b24eba9e62a0298399851"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "node-pty@1.1.0": true,
+    "github:jkfujinami/antigravity-client#abb4afc2e9d1316b2b1b24eba9e62a0298399851": true
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^22.0.0",
+    "typescript": "^6.0.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": false
+    }
+  }
+}
