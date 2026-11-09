@@ -227,6 +227,27 @@ export class CascadeManager {
     }
   }
 
+  getActiveCascade(sessionId: string): Cascade | undefined {
+    return this.activeCascades.get(sessionId);
+  }
+
+  /**
+   * Explicitly cancels any active invocation for the session's Cascade,
+   * deterministically forcing LS into `idle` state. (D-03)
+   */
+  async cancelCascade(sessionId: string): Promise<void> {
+    const cascade = this.activeCascades.get(sessionId);
+    if (!cascade) return;
+
+    try {
+      await cascade.cancel();
+    } catch (err: any) {
+      if (this.verbose) {
+        console.error(`[CascadeManager] Failed to cancel cascade ${cascade.cascadeId}:`, err?.message);
+      }
+    }
+  }
+
   clearSession(sessionId: string): void {
     this.bindingStore.remove(sessionId);
     this.disposeCascade(sessionId);

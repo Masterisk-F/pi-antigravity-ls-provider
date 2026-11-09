@@ -69,6 +69,117 @@ describe("extractTurnUserPrompts (Unit)", () => {
     assert.deepStrictEqual(result, []);
   });
 
+  it("extracts user prompts after a terminating tool call (e.g. plannotator_submit_plan followed by plan approval)", () => {
+    const messages = [
+      { role: "user", content: "Create a plan" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call_submit",
+            name: "plannotator_submit_plan",
+            arguments: { filePath: "PLAN.md" },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_submit",
+        toolName: "plannotator_submit_plan",
+        content: [{ type: "text", text: "Plan PLAN.md submitted for review in Plannotator." }],
+      },
+      {
+        role: "user",
+        content: "Plan approved. You now have full tool access. Execute the plan in PLAN.md.",
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "[PLANNOTATOR - EXECUTING PLAN]\nThe planning phase is over.",
+          },
+        ],
+      },
+    ];
+
+    const result = extractTurnUserPrompts(messages);
+    assert.deepStrictEqual(result, [
+      "Plan approved. You now have full tool access. Execute the plan in PLAN.md.",
+      "[PLANNOTATOR - EXECUTING PLAN]\nThe planning phase is over.",
+    ]);
+  });
+
+  it("extracts user prompt after tool execution was aborted mid-run", () => {
+    const messages = [
+      { role: "user", content: "Run long running command" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call_bash_long",
+            name: "bash",
+            arguments: { command: "sleep 100" },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_bash_long",
+        toolName: "bash",
+        content: [{ type: "text", text: "Command aborted" }],
+        isError: true,
+      },
+      {
+        role: "user",
+        content: "Let us try a faster command instead.",
+      },
+    ];
+
+    const result = extractTurnUserPrompts(messages);
+    assert.deepStrictEqual(result, ["Let us try a faster command instead."]);
+  });
+
+  it("returns empty array for parallel tool call continuations without user messages", () => {
+    const messages = [
+      { role: "user", content: "Read two files" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call_read_1",
+            name: "read",
+            arguments: { path: "a.txt" },
+          },
+          {
+            type: "toolCall",
+            id: "call_read_2",
+            name: "read",
+            arguments: { path: "b.txt" },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_read_1",
+        toolName: "read",
+        content: [{ type: "text", text: "content A" }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_read_2",
+        toolName: "read",
+        content: [{ type: "text", text: "content B" }],
+      },
+    ];
+
+    const result = extractTurnUserPrompts(messages);
+    assert.deepStrictEqual(result, []);
+  });
+
   it("extracts only messages after the most recent assistant response in multi-turn conversation", () => {
     const messages = [
       { role: "user", content: "Previous question" },

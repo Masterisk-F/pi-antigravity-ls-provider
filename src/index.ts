@@ -72,6 +72,26 @@ export default async function (pi: ExtensionAPI) {
     streamSimple,
   });
 
+  // ── Tool execution lifecycle ──
+  // Immediately resolve parked MCP tool calls as soon as Pi finishes executing them.
+  // This ensures tools returning `terminate: true` (e.g. plannotator_submit_plan)
+  // or tools aborted mid-execution return their HTTP response to the Language Server
+  // right away rather than hanging open across the idle review/wait period. (D-02)
+  pi.on("tool_result", async (event: any) => {
+    if (event?.toolCallId) {
+      roundTrip.resolve(event.toolCallId, event);
+    }
+  });
+
+  // ── Agent settlement lifecycle ──
+  // When Pi's agent run has fully settled and becomes idle (e.g. after a terminating tool
+  // like plannotator_submit_plan, or user abort), explicitly cancel the Language Server
+  // invocation to deterministically force it into `status: idle`. (D-03)
+  pi.on("agent_settled", async (_event: any, ctx: ExtensionContext) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    await cascadeManager.cancelCascade(sessionId);
+  });
+
   // ── Session hooks ──
   pi.on("session_start", async (_event: unknown, ctx: ExtensionContext) => {
     if (ctx.cwd) {

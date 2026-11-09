@@ -36,7 +36,11 @@ export interface ProviderStreamDeps {
 
 /**
  * Extracts all new user prompt texts for the current turn.
- * If the current turn contains toolResult messages, returns an empty array (tool continuation).
+ * Collects all user messages appearing after the most recent assistant message.
+ * In a normal tool continuation turn, turnMessages contains only toolResult messages,
+ * so userTexts naturally evaluates to an empty array.
+ * When a tool terminates the turn (e.g. plannotator_submit_plan returning `terminate: true`)
+ * or after an aborted tool, any subsequent user messages are extracted and sent to LS. (D-01)
  */
 export function extractTurnUserPrompts(
   messages: Array<{ role: string; content?: any }>
@@ -50,13 +54,6 @@ export function extractTurnUserPrompts(
   }
 
   const turnMessages = messages.slice(lastAssistantIndex + 1);
-
-  // If the turn contains toolResult messages, this turn is a continuation of a parked tool call.
-  // The cascade is already resuming via MCP tool resolution; do NOT send another user message.
-  const hasToolResult = turnMessages.some((msg) => msg.role === "toolResult");
-  if (hasToolResult) {
-    return [];
-  }
 
   const userTexts: string[] = [];
   for (const msg of turnMessages) {

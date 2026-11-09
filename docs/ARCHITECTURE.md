@@ -73,10 +73,10 @@ sequenceDiagram
     RT-->>PS: notify park event
     PS-->>Pi: Emit tool_use block and stopReason toolUse
     Note over Pi: Pi executes tool locally and captures snapshot
-    Pi->>PS: Next streamSimple call with toolResult
-    PS->>RT: resolve callId with toolResult
+    Pi->>RT: pi.on("tool_result") resolves callId immediately
     RT-->>MCP: Promise resolves with content
     MCP-->>LS: HTTP 200 JSON-RPC response
+    Pi->>PS: Next streamSimple call (continuation)
     LS-->>PS: Next text delta and status idle
     PS-->>Pi: done with stopReason stop
 ```
@@ -84,8 +84,9 @@ sequenceDiagram
 ### Multiple Sequential & Concurrent Tool Calls
 
 A single turn may trigger multiple tool calls:
-- **Sequential Calls**: The model receives one tool result, reasons further, and issues another tool call. Each call cycles through `park` → `toolUse` termination → Pi execution → `resolve` on next `streamSimple` turn.
+- **Sequential Calls**: The model receives one tool result, reasons further, and issues another tool call. Each call cycles through `park` → `toolUse` termination → Pi execution → immediate `resolve` via `pi.on("tool_result")` → next `streamSimple` turn.
 - **Concurrent Calls**: When the model issues parallel tool calls, `round-trip.ts` tracks each active `callId` in a `Map<string, ParkedCall>`. Pi resolves tool results individually. The turn is only marked complete (`status: "idle"`) when all parked promises have been resolved.
+- **Terminating Tool Calls**: Custom tools returning `terminate: true` (e.g. `plannotator_submit_plan`, `structured-output`) end the agent run without an automatic follow-up LLM turn. The tool call is resolved immediately via `pi.on("tool_result")`, and Pi's `agent_settled` hook deterministically calls `cascade.cancel()` to halt any background planner loop in LS, ensuring LS transitions cleanly to `status: "idle"`.
 
 ---
 
@@ -247,7 +248,8 @@ sequenceDiagram
 ### Turn Extraction Rules
 
 The provider applies the following rules in `extractTurnUserPrompts`:
-1. **Turn Boundary Resolution**: Scans backwards for the last `assistant` message. All messages after this boundary belong to the current turn (`turnMessages`).
-2. **Tool Continuation Guard**: If `turnMessages` contains any `toolResult` message, the turn is an active resumption of a parked MCP tool call. Prompt dispatch is bypassed because the Language Server is already processing the MCP response.
-3. **Sequential Trajectory Steps**: For all `user` messages in the turn, `sendUserCascadeMessage` is awaited sequentially. The Language Server creates individual `CORTEX_STEP_TYPE_USER_INPUT` trajectory steps for each message, preserving clean message boundaries and ensuring no user prompts are lost.
+1. **Turn Boundary Resolution**: Scans backwards for the last `assistant` message. All messages after this boundary belong to the current turn (`turnMessages = messages.slice(lastAssistantIndex + 1)`).
+2. **Tool Continuations vs. New User Turns**: In a normal tool continuation turn, `turnMessages` contains only `toolResult` messages without any `user` message, so `userTexts` naturally evaluates to `[]` and prompt dispatch is bypassed because LS is already processing the MCP tool response.
+3. **Terminating Tool & Abort Resumption**: When a tool terminates the turn (`terminate: true`, e.g. `plannotator_submit_plan`) or when the user aborts mid-tool-execution, `turnMessages` contains the preceding `toolResult` followed by the new `user` message(s). All `user` messages appearing in `turnMessages` are extracted and dispatched sequentially via `sendUserCascadeMessage`.
+4. **Sequential Trajectory Steps**: For all `user` messages in the turn, `sendUserCascadeMessage` is awaited sequentially. The Language Server creates individual `CORTEX_STEP_TYPE_USER_INPUT` trajectory steps for each message, preserving clean message boundaries and ensuring no user prompts are lost.
 
