@@ -11,26 +11,26 @@ The extension acts as a bidirectional translation bridge between **Pi's streamin
 ```mermaid
 flowchart TB
     subgraph PI["pi Process"]
-        TREE["Tree Navigation / Rewind\n(pi-rewind-cp)"]
-        LOOP["Tool Loop\nPermissions / Snapshots"]
+        TREE["Tree Navigation and Rewind<br/>pi-rewind-cp"]
+        LOOP["Tool Loop<br/>Permissions and Snapshots"]
         subgraph EXT["pi-antigravity-ls-provider"]
-            PS["provider-stream.ts\nstreamSimple"]
-            CM["cascade-manager.ts\nBinding & History Sync"]
-            TB["tool-bridge/\nMCP Server & RoundTrip"]
+            PS["provider-stream.ts<br/>streamSimple"]
+            CM["cascade-manager.ts<br/>Binding and History Sync"]
+            TB["tool-bridge<br/>MCP Server and RoundTrip"]
         end
     end
-    subgraph LS["Antigravity Language Server (Official Go Binary)"]
-        PLANNER["Planner (LLM)\nConfigured via DeclarativeMixinConfig"]
-        MCPC["MCP Client\n(Connected to pi-tools)"]
+    subgraph LS["Antigravity Language Server"]
+        PLANNER["Planner LLM<br/>DeclarativeMixinConfig"]
+        MCPC["MCP Client<br/>Connected to pi-tools"]
     end
 
-    TREE -->|session / message events| CM
+    TREE -->|session events| CM
     PS -->|tool_use stopReason| LOOP
     LOOP -->|toolResult| PS
     PS --- CM
     CM --- TB
-    PS -->|ConnectRPC (127.0.0.1)| PLANNER
-    TB ---|Streamable HTTP (/mcp)| MCPC
+    PS -->|ConnectRPC on loopback| PLANNER
+    TB ---|Streamable HTTP on loopback| MCPC
     MCPC --> PLANNER
 ```
 
@@ -63,22 +63,22 @@ sequenceDiagram
     participant MCP as mcp-server.ts
     participant LS as Antigravity LS
 
-    User->>Pi: Prompt: "Inspect README.md"
-    Pi->>PS: streamSimple(context)
-    PS->>LS: sendUserCascadeMessage(...)
-    LS-->>PS: text / thinking deltas
-    PS-->>Pi: text_delta / thinking_delta events
-    LS->>MCP: POST /mcp (tools/call: "read")
-    MCP->>RT: park(callId, "read", args)
-    RT-->>PS: emit("park", { callId, toolName, args })
-    PS-->>Pi: Emit tool_use block + stopReason: "toolUse"
-    Note over Pi: Pi executes tool locally (triggering pi-rewind-cp)
-    Pi->>PS: Next streamSimple call (with toolResult)
-    PS->>RT: resolve(callId, toolResult)
+    User->>Pi: Prompt: Inspect README.md
+    Pi->>PS: streamSimple with context
+    PS->>LS: sendUserCascadeMessage
+    LS-->>PS: text and thinking deltas
+    PS-->>Pi: text_delta and thinking_delta events
+    LS->>MCP: POST /mcp tools/call: read
+    MCP->>RT: park callId and toolName
+    RT-->>PS: notify park event
+    PS-->>Pi: Emit tool_use block and stopReason toolUse
+    Note over Pi: Pi executes tool locally and captures snapshot
+    Pi->>PS: Next streamSimple call with toolResult
+    PS->>RT: resolve callId with toolResult
     RT-->>MCP: Promise resolves with content
     MCP-->>LS: HTTP 200 JSON-RPC response
-    LS-->>PS: Next text delta / status: "idle"
-    PS-->>Pi: done(stopReason: "stop")
+    LS-->>PS: Next text delta and status idle
+    PS-->>Pi: done with stopReason stop
 ```
 
 ### Multiple Sequential & Concurrent Tool Calls
@@ -156,12 +156,12 @@ The provider persists branch state in `~/.pi/agent/pi-antigravity-ls/bindings.js
 
 ```mermaid
 flowchart TD
-    A[Start Turn: message_start] --> B{Does lastLeafId exist<br>in current branch?}
-    B -->|Yes| C[Normal continuation<br>Keep current cascadeId]
-    B -->|No: Rewind / Divergence detected| D{Find newest branch entry<br>with recorded stepIndex}
-    D -->|Found entry target| E[revertToCascadeStep stepIndex<br>Rolls back trajectory in-place]
-    D -->|Not found / Corrupt| F[Start fresh Cascade<br>Reset binding for session]
-    E --> G[Prune binding.steps after target]
+    A[Start Turn: message_start] --> B{Does lastLeafId exist<br/>in current branch?}
+    B -->|Yes| C[Normal continuation<br/>Keep current cascadeId]
+    B -->|No| D{Find newest branch entry<br/>with recorded stepIndex}
+    D -->|Found entry target| E[revertToCascadeStep stepIndex<br/>Rolls back trajectory in place]
+    D -->|Not found or corrupt| F[Start fresh Cascade<br/>Reset binding for session]
+    E --> G[Prune binding steps after target]
     G --> H[Update lastLeafId to target]
     F --> H
     C --> I[Send turn prompt to Cascade]
