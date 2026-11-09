@@ -55,15 +55,9 @@ export const ANTIGRAVITY_LS_MODELS: AntigravityModelDefinition[] = [
     maxTokens: 64000,
     resolveTier: (effort) => {
       const e = normalizeEffort(effort);
-      // In current Antigravity LS releases, M322 (1322) is superseded by M418/M417/M419 (Argon series)
-      const idMap: Record<EffortTier, number> = {
-        low: 1419,
-        medium: 1418,
-        high: 1417,
-      };
       return {
-        numericId: idMap[e],
-        modelName: `gemini-4-argon-${e}`,
+        numericId: 1322,
+        modelName: `gemini-3.8-flash-${e}`,
       };
     },
   },

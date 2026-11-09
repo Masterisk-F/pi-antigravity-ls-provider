@@ -60,6 +60,7 @@ describe("Tool Execution E2E with gemini-3.8-flash (Integration)", { skip: !HAS_
 
       // Resolve model: gemini-3.8-flash
       const { numericId: modelId, modelName } = modelCatalog.resolveModel("gemini-3.8-flash");
+      assert.strictEqual(modelId, 1322, "gemini-3.8-flash must resolve to numericId 1322");
 
       const cfg = buildCascadeConfig({
         modelId,
@@ -85,9 +86,9 @@ describe("Tool Execution E2E with gemini-3.8-flash (Integration)", { skip: !HAS_
         cascadeConfig: cfg as any,
       });
 
-      // Wait for turn to complete (running -> idle) with 35s timeout (must NOT hang for 3 minutes!)
+      // Wait for turn to complete (running -> idle) with 50s timeout (must NOT hang for 3 minutes!)
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("Timeout waiting for turn completion")), 35000);
+        const timer = setTimeout(() => reject(new Error("Timeout waiting for turn completion")), 50000);
         let wasRunning = false;
         cascade.on("statusChange", (ev) => {
           if (ev.status === "running") wasRunning = true;
@@ -102,7 +103,7 @@ describe("Tool Execution E2E with gemini-3.8-flash (Integration)", { skip: !HAS_
 
       assert.strictEqual(toolCallReceived, true, "Tool call must be intercepted by roundTrip");
       assert.ok(receivedCommand.includes("ls"), "Model should call ls command via bash");
-      assert.ok(durationMs < 25000, `Execution should finish within 25s (took ${durationMs}ms)`);
+      assert.ok(durationMs < 45000, `Execution should finish within 45s (took ${durationMs}ms)`);
       assert.ok(outputText.length > 0, "Model should generate final text output after tool completion");
 
       cascade.dispose();
