@@ -11,11 +11,28 @@ import { buildCascadeConfig } from "./cascade-config.js";
 
 export interface TurnContext {
   sessionId: string;
-  branch: Array<{ id: string; [key: string]: any }>;
+  branch: Array<{ id?: string; role?: string; timestamp?: number; [key: string]: any }>;
   modelId: number;
   modelName?: string;
   systemPrompt: string;
   mcpServerName?: string;
+  /**
+   * Serialized transcript of every message that precedes the current turn.
+   * Injected into the Cascade config when a fresh Cascade is started, because a
+   * new Cascade has no trajectory of its own to reason from.
+   */
+  priorHistory?: string;
+  /**
+   * True when the previous assistant turn belongs to a different provider, meaning
+   * the current Cascade can never have seen the turns that happened in between.
+   */
+  isExternalSwitch?: boolean;
+}
+
+export interface TurnCascade {
+  cascade: Cascade;
+  /** History transcript the Language Server must receive for this turn ("" when none). */
+  priorHistory: string;
 }
 
 export class CascadeManager {
@@ -32,12 +49,31 @@ export class CascadeManager {
    * Reuses in-memory Cascade if active, or resumes from binding on session start.
    * Handles history rewinding via revertToCascadeStep when branch diversion is detected.
    */
-  async ensureTurnCascade(ctx: TurnContext): Promise<Cascade> {
+  async ensureTurnCascade(ctx: TurnContext): Promise<TurnCascade> {
     const { sessionId, branch, modelId, modelName, systemPrompt } = ctx;
     const client = await this.lsConnection.ensureClient();
-    const binding = this.bindingStore.get(sessionId);
+    let binding = this.bindingStore.get(sessionId);
 
-    const currentLeafId = branch.length > 0 ? branch[branch.length - 1].id : "";
+    const leafEntry = branch.length > 0 ? branch[branch.length - 1] : undefined;
+    // pi runtime messages do not always carry an `id`; fall back to a positional key so
+    // rewind detection and turn-end recording stay consistent with provider-stream.
+    const currentLeafId = leafEntry
+      ? (leafEntry.id ?? `${leafEntry.role ?? "unknown"}:${leafEntry.timestamp ?? 0}:${branch.length}`)
+      : "";
+
+    // 0. An external provider switch invalidates the existing trajectory: the turns that
+    // happened on the other provider never reached this Cascade, so its memory is
+    // unrecoverably incomplete. Drop it and replay the full branch into a new Cascade.
+    if (ctx.isExternalSwitch) {
+      if (this.verbose) {
+        console.error(
+          `[CascadeManager] External provider switch detected for session ${sessionId}; restarting cascade with ${ctx.priorHistory?.length ?? 0} chars of prior history.`
+        );
+      }
+      this.disposeCascade(sessionId);
+      this.bindingStore.remove(sessionId);
+      binding = undefined;
+    }
 
     // 1. Prefer existing in-memory Cascade instance for this session (avoid repeat id subscriptions)
     let cascade: Cascade | null = this.activeCascades.get(sessionId) || null;
@@ -60,7 +96,7 @@ export class CascadeManager {
       // Check for history rewind or divergence:
       // If the previous turn's leaf still exists anywhere in the current branch, we are continuing normally.
       // If it does NOT exist, the branch was rewound / forked to a past point!
-      const branchEntryIds = new Set(branch.map((b) => b.id));
+      const branchEntryIds = new Set(branch.map((b, i) => b.id ?? `${b.role ?? "unknown"}:${b.timestamp ?? 0}:${i + 1}`));
       const isRewound = Boolean(binding.lastLeafId && !branchEntryIds.has(binding.lastLeafId));
 
       if (isRewound) {
@@ -75,7 +111,8 @@ export class CascadeManager {
         let targetStepIndex: number | null = null;
 
         for (let i = branch.length - 1; i >= 0; i--) {
-          const entryId = branch[i].id;
+          const entry = branch[i];
+          const entryId = entry.id ?? `${entry.role ?? "unknown"}:${entry.timestamp ?? 0}:${i + 1}`;
           if (typeof binding.steps[entryId] === "number") {
             targetEntryId = entryId;
             targetStepIndex = binding.steps[entryId];
@@ -94,11 +131,22 @@ export class CascadeManager {
             await client.lsClient.revertToCascadeStep({
               cascadeId: binding.cascadeId,
               stepIndex: targetStepIndex,
-              overrideConfig: buildCascadeConfig({ modelId, modelName, systemPrompt, mcpServerName: ctx.mcpServerName }),
+              overrideConfig: buildCascadeConfig({
+                modelId,
+                modelName,
+                systemPrompt,
+                mcpServerName: ctx.mcpServerName,
+                // The trajectory is rolled back in place, so the history the Cascade
+                // owns up to the revert point stays valid; only re-assert what it
+                // never saw at all.
+                conversationHistory: binding.priorHistory,
+              }),
             });
 
             // Clean up steps after targetEntryId
-            const validEntryIds = new Set(branch.map((b) => b.id));
+            const validEntryIds = new Set(
+              branch.map((b, i) => b.id ?? `${b.role ?? "unknown"}:${b.timestamp ?? 0}:${i + 1}`)
+            );
             const newSteps: Record<string, number> = {};
             for (const [eid, sidx] of Object.entries(binding.steps)) {
               if (validEntryIds.has(eid) && sidx <= targetStepIndex) {
@@ -130,17 +178,26 @@ export class CascadeManager {
       }
       cascade = await client.startCascade();
 
+      // A brand new Cascade has an empty trajectory, so everything that happened
+      // before this turn has to be carried in the prompt.
+      const priorHistory = ctx.priorHistory ?? "";
+
       this.bindingStore.set(sessionId, {
         cascadeId: cascade.cascadeId,
         lastLeafId: currentLeafId,
         steps: {},
+        priorHistory,
       });
 
       this.attachListeners(cascade);
       this.activeCascades.set(sessionId, cascade);
+
+      return { cascade, priorHistory };
     }
 
-    return cascade;
+    // Reusing a Cascade: its own trajectory already holds every turn it produced, so
+    // only the history it never saw (captured when it was created) is re-asserted.
+    return { cascade, priorHistory: binding?.priorHistory ?? "" };
   }
 
   private attachListeners(cascade: Cascade): void {
