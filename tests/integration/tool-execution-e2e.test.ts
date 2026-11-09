@@ -58,9 +58,9 @@ describe("Tool Execution E2E with gemini-3.8-flash (Integration)", { skip: !HAS_
         outputText += d.delta;
       });
 
-      // Resolve model: gemini-3.8-flash
+      // Resolve model: gemini-3.8-flash (default effort: medium -> 1319)
       const { numericId: modelId, modelName } = modelCatalog.resolveModel("gemini-3.8-flash");
-      assert.strictEqual(modelId, 1322, "gemini-3.8-flash must resolve to numericId 1322");
+      assert.strictEqual(modelId, 1319, "gemini-3.8-flash medium must resolve to numericId 1319");
 
       const cfg = buildCascadeConfig({
         modelId,

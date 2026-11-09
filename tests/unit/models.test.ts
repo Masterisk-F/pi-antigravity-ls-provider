@@ -5,50 +5,50 @@ import { ModelCatalog } from "../../src/models.js";
 describe("ModelCatalog Resolution & Model Isolation", () => {
   const catalog = new ModelCatalog();
 
-  describe("Gemini 3.8 Flash (Numeric ID: 1322)", () => {
-    test("resolves effort: low / minimal to 1322 and gemini-3.8-flash-low", () => {
+  describe("Gemini 3.8 Flash (Numeric IDs: 1318, 1319, 1320)", () => {
+    test("resolves effort: low / minimal to 1320 and gemini-3.8-flash-low", () => {
       const resLow = catalog.resolveModel("gemini-3.8-flash", "low");
-      assert.equal(resLow.numericId, 1322);
+      assert.equal(resLow.numericId, 1320);
       assert.equal(resLow.modelName, "gemini-3.8-flash-low");
 
       const resMinimal = catalog.resolveModel("gemini-3.8-flash", "minimal");
-      assert.equal(resMinimal.numericId, 1322);
+      assert.equal(resMinimal.numericId, 1320);
       assert.equal(resMinimal.modelName, "gemini-3.8-flash-low");
     });
 
-    test("resolves effort: medium / unspecified to 1322 and gemini-3.8-flash-medium", () => {
+    test("resolves effort: medium / unspecified to 1319 and gemini-3.8-flash-medium", () => {
       const resMed = catalog.resolveModel("gemini-3.8-flash", "medium");
-      assert.equal(resMed.numericId, 1322);
+      assert.equal(resMed.numericId, 1319);
       assert.equal(resMed.modelName, "gemini-3.8-flash-medium");
 
       const resDefault = catalog.resolveModel("gemini-3.8-flash");
-      assert.equal(resDefault.numericId, 1322);
+      assert.equal(resDefault.numericId, 1319);
       assert.equal(resDefault.modelName, "gemini-3.8-flash-medium");
     });
 
-    test("resolves effort: high / xhigh / max to 1322 and gemini-3.8-flash-high", () => {
+    test("resolves effort: high / xhigh / max to 1318 and gemini-3.8-flash-high", () => {
       const resHigh = catalog.resolveModel("gemini-3.8-flash", "high");
-      assert.equal(resHigh.numericId, 1322);
+      assert.equal(resHigh.numericId, 1318);
       assert.equal(resHigh.modelName, "gemini-3.8-flash-high");
 
       const resXhigh = catalog.resolveModel("gemini-3.8-flash", "xhigh");
-      assert.equal(resXhigh.numericId, 1322);
+      assert.equal(resXhigh.numericId, 1318);
       assert.equal(resXhigh.modelName, "gemini-3.8-flash-high");
 
       const resMax = catalog.resolveModel("gemini-3.8-flash", "max");
-      assert.equal(resMax.numericId, 1322);
+      assert.equal(resMax.numericId, 1318);
       assert.equal(resMax.modelName, "gemini-3.8-flash-high");
     });
 
     test("resolves with provider prefix antigravity-ls/gemini-3.8-flash", () => {
       const res = catalog.resolveModel("antigravity-ls/gemini-3.8-flash", "medium");
-      assert.equal(res.numericId, 1322);
+      assert.equal(res.numericId, 1319);
       assert.equal(res.modelName, "gemini-3.8-flash-medium");
     });
 
     test("resolves legacy underscore alias gemini_3_8_flash", () => {
       const res = catalog.resolveModel("gemini_3_8_flash", "high");
-      assert.equal(res.numericId, 1322);
+      assert.equal(res.numericId, 1318);
       assert.equal(res.modelName, "gemini-3.8-flash-high");
     });
   });
@@ -134,7 +134,7 @@ describe("ModelCatalog Resolution & Model Isolation", () => {
   describe("Fallback Behavior", () => {
     test("falls back to Gemini 3.8 Flash Medium for unknown model ID", () => {
       const res = catalog.resolveModel("unknown-model-xyz");
-      assert.equal(res.numericId, 1322);
+      assert.equal(res.numericId, 1319);
       assert.equal(res.modelName, "gemini-3.8-flash-medium");
     });
   });

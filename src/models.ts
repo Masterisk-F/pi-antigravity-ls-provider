@@ -55,8 +55,13 @@ export const ANTIGRAVITY_LS_MODELS: AntigravityModelDefinition[] = [
     maxTokens: 64000,
     resolveTier: (effort) => {
       const e = normalizeEffort(effort);
+      const idMap: Record<EffortTier, number> = {
+        low: 1320,
+        medium: 1319,
+        high: 1318,
+      };
       return {
-        numericId: 1322,
+        numericId: idMap[e],
         modelName: `gemini-3.8-flash-${e}`,
       };
     },
