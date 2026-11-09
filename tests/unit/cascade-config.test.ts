@@ -1,12 +1,12 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { buildCascadeConfig, BUILTIN_PROMPT_SECTIONS } from "../../src/cascade-config.js";
+import { buildCascadeConfig } from "../../src/cascade-config.js";
 
-describe("CascadeConfig Builder", () => {
-  test("disables all builtin tools while keeping mcp enabled", () => {
+describe("CascadeConfig Builder (Declarative Mixin)", () => {
+  test("configures declarativeMixinConfig with only pi-tools in tool schema", () => {
     const config = buildCascadeConfig({
       modelId: 1419,
-      systemPrompt: "Test System Prompt",
+      systemPrompt: "Custom Pi Instructions",
     });
 
     const planner = config.plannerConfig;
@@ -14,42 +14,19 @@ describe("CascadeConfig Builder", () => {
     assert.equal(planner.noToolSummary, true);
     assert.equal(planner.requestedModel.choice.value, 1419);
 
-    const tc = planner.toolConfig;
-    assert.equal(tc.runCommand.forceDisable, true);
-    assert.equal(tc.code.forceDisable, true);
-    assert.equal(tc.mquery.forceDisable, true);
-    assert.equal(tc.searchWeb.forceDisable, true);
-    assert.equal(tc.memory.forceDisable, true);
-    assert.equal(tc.generateImage.forceDisable, true);
-    assert.equal(tc.suggestedResponse.forceDisable, true);
-    assert.equal(tc.trajectorySearch.forceDisable, true);
+    const mixin = planner.plannerTypeConfig;
+    assert.equal(mixin.case, "declarativeMixinConfig");
 
-    assert.equal(tc.invokeSubagent.enabled, false);
-    assert.equal(tc.antigravityBrowser.enabled, false);
-    assert.equal(tc.notebookEdit.enabled, false);
-    assert.equal(tc.askQuestion.enabled, false);
-    assert.equal(tc.readKnowledgeBaseItem.enabled, false);
-    assert.equal(tc.disableSimpleResearchTools, true);
+    // Tools whitelist contains only pi-tools
+    const tools = mixin.value.tools;
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0].source.value, "pi-tools");
+    assert.equal(tools[0].match.value, ".*");
 
-    // MCP tool config should NOT be force-disabled
-    assert.equal((tc as any).mcp?.forceDisable ?? false, false);
-  });
-
-  test("removes all 11 default prompt sections and appends pi prompt", () => {
-    const config = buildCascadeConfig({
-      modelId: 1418,
-      systemPrompt: "Custom Pi Instructions",
-    });
-
-    const psc = config.plannerConfig.promptSectionCustomizationConfig;
-    assert.equal(psc.removePromptSections.length, 11);
-    for (const sec of BUILTIN_PROMPT_SECTIONS) {
-      assert.ok(psc.removePromptSections.includes(sec as any));
-    }
-
-    assert.equal(psc.appendPromptSections.length, 1);
-    assert.equal(psc.appendPromptSections[0].title, "pi_system");
-    assert.ok(psc.appendPromptSections[0].content.includes("Custom Pi Instructions"));
-    assert.ok(psc.appendPromptSections[0].content.includes("CRITICAL TOOL USE DIRECTIVE"));
+    // Prompt section contains only pi_system
+    const sections = mixin.value.promptSections;
+    assert.equal(sections.length, 1);
+    assert.equal(sections[0].item.value.title, "pi_system");
+    assert.equal(sections[0].item.value.content, "Custom Pi Instructions");
   });
 });
