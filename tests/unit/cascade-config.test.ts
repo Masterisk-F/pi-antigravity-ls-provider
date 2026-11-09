@@ -49,6 +49,7 @@ describe("CascadeConfig Builder", () => {
 
     assert.equal(psc.appendPromptSections.length, 1);
     assert.equal(psc.appendPromptSections[0].title, "pi_system");
-    assert.equal(psc.appendPromptSections[0].content, "Custom Pi Instructions");
+    assert.ok(psc.appendPromptSections[0].content.includes("Custom Pi Instructions"));
+    assert.ok(psc.appendPromptSections[0].content.includes("CRITICAL TOOL USE DIRECTIVE"));
   });
 });

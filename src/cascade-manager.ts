@@ -143,18 +143,34 @@ export class CascadeManager {
   }
 
   private attachListeners(cascade: Cascade): void {
-    // 1. Auto-approve MCP tool interactions
+    // 1. Enforce approval gate: ALLOW pi-tools MCP calls, DENY all Antigravity builtins
     cascade.on("interaction", async (req: any) => {
-      if (this.verbose) {
-        console.error(`[CascadeManager] Interaction on step ${req.stepIndex}: ${req.type} - ${req.description}`);
-      }
-      try {
-        await req.approve("conversation");
+      const desc = req.description || "";
+      const rawCase = req.raw?.requestedInteraction?.interaction?.case;
+      const isMcp =
+        req.type === "mcp" ||
+        desc.includes("pi-tools") ||
+        (rawCase === "permission" && desc.includes("pi-tools"));
+
+      if (isMcp) {
         if (this.verbose) {
-          console.error(`[CascadeManager] Auto-approved interaction on step ${req.stepIndex}`);
+          console.error(`[CascadeManager] Auto-approving MCP interaction on step ${req.stepIndex}: ${desc}`);
         }
-      } catch (err: any) {
-        console.error(`[CascadeManager] Failed to auto-approve interaction: ${err.message}`);
+        try {
+          await req.approve("conversation");
+        } catch (err: any) {
+          console.error(`[CascadeManager] Failed to approve MCP interaction: ${err.message}`);
+        }
+      } else {
+        // Built-in tool detected (read_file, run_command, etc.) — STRICTLY DENY!
+        console.warn(
+          `[CascadeManager] Blocked Antigravity builtin tool interaction on step ${req.stepIndex}: ${desc}`
+        );
+        try {
+          await req.deny();
+        } catch (err: any) {
+          console.error(`[CascadeManager] Failed to deny builtin interaction: ${err.message}`);
+        }
       }
     });
 

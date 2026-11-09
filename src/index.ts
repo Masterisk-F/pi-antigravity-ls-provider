@@ -13,7 +13,7 @@ import { ModelCatalog } from "./models.js";
 import { createStreamSimple } from "./provider-stream.js";
 import { BindingStore } from "./bindings.js";
 
-export default function (pi: ExtensionAPI) {
+export default async function (pi: ExtensionAPI) {
   const roundTrip = new RoundTrip();
   const bindingStore = new BindingStore();
   const lsConnection = new LsConnection({
@@ -29,12 +29,13 @@ export default function (pi: ExtensionAPI) {
     verbose: false,
   });
 
-  // Start local MCP HTTP server in background
-  mcpServer.start().then(() => {
+  // Ensure MCP HTTP bridge server is listening and registered in mcp_config.json
+  try {
+    await mcpServer.start();
     mcpServer.registerInMcpConfig();
-  }).catch((e: any) => {
+  } catch (e: any) {
     console.error(`[antigravity-ls] Failed to start MCP bridge:`, e.message);
-  });
+  }
 
   const models = modelCatalog.getModels();
 
@@ -59,7 +60,15 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event: unknown, ctx: ExtensionContext) => {
     if (ctx.cwd) {
       lsConnection.setWorkspacePath(ctx.cwd);
-      mcpServer.registerInMcpConfig();
+    }
+    mcpServer.registerInMcpConfig();
+    const client = lsConnection.getClient();
+    if (client) {
+      try {
+        await client.refreshMcpServers();
+      } catch {
+        // ignore
+      }
     }
   });
 
