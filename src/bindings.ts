@@ -11,6 +11,13 @@ export interface SessionBinding {
   lastLeafId: string;
   /** Map from pi entry id to the trajectory step count at that point */
   steps: Record<string, number>;
+  /**
+   * Transcript of the conversation that happened before this Cascade was created
+   * (for example turns held with another provider). The Cascade's own trajectory
+   * covers everything after creation, so only this prefix is replayed into the
+   * prompt on later turns.
+   */
+  priorHistory?: string;
 }
 
 export interface BindingsFileSchema {

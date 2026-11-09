@@ -67,4 +67,34 @@ describe("CascadeConfig Builder (Declarative Mixin)", () => {
     const tools = config.plannerConfig.plannerTypeConfig.value.tools;
     assert.equal(tools[0].source.value, "pi-tools-4321");
   });
+
+  test("injects conversation_history as a second prompt section when provided", () => {
+    const config = buildCascadeConfig({
+      modelId: 1419,
+      systemPrompt: "pi system prompt",
+      conversationHistory: "[User]: codename is ZETA-9\n\n[Assistant]: Noted.",
+    });
+
+    const sections = config.plannerConfig.plannerTypeConfig.value.promptSections;
+    assert.equal(sections.length, 2);
+    assert.equal(sections[0].item.value.title, "pi_system");
+    assert.equal(sections[0].item.value.content, "pi system prompt");
+    assert.equal(sections[1].item.value.title, "conversation_history");
+    assert.ok(sections[1].item.value.content.includes("ZETA-9"));
+    assert.ok(sections[1].item.value.content.includes("conversation history"));
+  });
+
+  test("omits the conversation_history section when history is absent or blank", () => {
+    for (const conversationHistory of [undefined, "", "   \n\t "]) {
+      const config = buildCascadeConfig({
+        modelId: 1419,
+        systemPrompt: "prompt",
+        conversationHistory,
+      });
+
+      const sections = config.plannerConfig.plannerTypeConfig.value.promptSections;
+      assert.equal(sections.length, 1);
+      assert.equal(sections[0].item.value.title, "pi_system");
+    }
+  });
 });

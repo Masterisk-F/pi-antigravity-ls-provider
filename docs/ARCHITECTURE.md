@@ -146,6 +146,7 @@ The provider persists branch state in `~/.pi/agent/pi-antigravity-ls/bindings.js
     "<piSessionId>": {
       "cascadeId": "c4d3...",
       "lastLeafId": "<piMessageEntryId>",
+      "priorHistory": "[User]: ...\n\n[Assistant]: ...",
       "steps": {
         "<entryId_1>": 2,
         "<entryId_2>": 4,
@@ -155,6 +156,8 @@ The provider persists branch state in `~/.pi/agent/pi-antigravity-ls/bindings.js
   }
 }
 ```
+
+`lastLeafId` and the `steps` keys fall back to a positional form (`role:timestamp:messageCount`) when pi's runtime message carries no session entry `id`, so rewind tracking keeps recording in every case. `priorHistory` is the transcript captured when the Cascade was created; see below.
 
 ### Rewind Algorithm
 
@@ -184,6 +187,21 @@ flowchart TD
    });
    ```
 3. **Synchronization**: Trajectory steps beyond `targetStepIndex` are dropped on both sides, ensuring the model's working memory matches the editor state.
+
+### Cross-Provider History Hand-Off
+
+A Cascade only knows the steps it produced itself. Pi, by contrast, keeps one conversation tree across every provider, so a session can move from another model to this provider (and back) at any turn. Whatever happened on the other side never entered the trajectory.
+
+When a turn starts and the last assistant message carries a `provider` other than `antigravity-ls`, the provider:
+
+1. serializes the whole prefix of `context.messages` (up to and including that assistant message) into a compact transcript — `[User]`, `[Assistant]`, `[Assistant tool calls]`, `[Tool result (<name>)]`, thinking dropped, tool results truncated;
+2. disposes the now-incomplete Cascade and starts a fresh one;
+3. stores the transcript as `priorHistory` on the session binding;
+4. emits it as a `conversation_history` prompt section inside `declarativeMixinConfig.promptSections`.
+
+Because the Cascade's own trajectory covers every turn after creation, `priorHistory` stays fixed for the life of that Cascade and is re-asserted (not extended) on subsequent turns, on rewinds, and inside `revertToCascadeStep`. Turns are therefore never duplicated in the model's context.
+
+> `additional_steps` on `SendUserCascadeMessageRequest` is *not* used for this: those steps are appended after the current user input, so replaying planner responses there re-emits their text on the stream.
 
 ---
 

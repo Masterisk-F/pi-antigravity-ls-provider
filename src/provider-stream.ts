@@ -5,6 +5,7 @@
  */
 
 import {
+  contentText,
   createAssistantMessageEventStream,
   type AssistantMessage,
   type AssistantMessageEventStream,
@@ -32,6 +33,123 @@ export interface ProviderStreamDeps {
   modelCatalog: ModelCatalog;
   mcpServer?: McpBridgeServer;
   verbose?: boolean;
+}
+
+/** Provider id this extension registers; used to tell "our own" assistant turns apart. */
+const PROVIDER_ID = "antigravity-ls";
+
+/** Per-tool-result character budget, mirroring pi's own summarization limits. */
+const TOOL_RESULT_MAX_CHARS = 4000;
+
+/**
+ * Serializes past messages into a compact transcript for the Language Server.
+ *
+ * Antigravity keeps its own trajectory, so this transcript only ever carries the
+ * history the current Cascade never saw (e.g. turns held with another provider).
+ * Thinking blocks are dropped: they are the model's private reasoning and would only
+ * burn context. Formatting follows pi's conversation-serialization convention so the
+ * model reads the same shapes it already knows from tool results and prompts.
+ */
+export function formatConversationHistory(
+  messages: Array<{ role: string; content?: any; toolName?: string; [key: string]: any }>
+): string {
+  const parts: string[] = [];
+
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      const text = contentText(msg.content as any, "").trim();
+      if (text) parts.push(`[User]: ${text}`);
+      continue;
+    }
+
+    if (msg.role === "assistant") {
+      const blocks = Array.isArray(msg.content) ? msg.content : [];
+      const text = contentText(blocks as any, "").trim();
+      if (text) parts.push(`[Assistant]: ${text}`);
+
+      const toolCalls = blocks
+        .filter((b: any) => b?.type === "toolCall")
+        .map((b: any) => {
+          const args = Object.entries(b.arguments ?? {})
+            .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+            .join(", ");
+          return `${b.name}(${args})`;
+        });
+      if (toolCalls.length > 0) {
+        parts.push(`[Assistant tool calls]: ${toolCalls.join("; ")}`);
+      }
+      continue;
+    }
+
+    if (msg.role === "toolResult") {
+      const text = contentText(msg.content as any, "").trim();
+      if (!text) continue;
+      const truncated =
+        text.length > TOOL_RESULT_MAX_CHARS
+          ? `${text.slice(0, TOOL_RESULT_MAX_CHARS)}\n[truncated]`
+          : text;
+      const label = msg.toolName ? `Tool result (${msg.toolName})` : "Tool result";
+      parts.push(`[${label}]: ${truncated}`);
+      continue;
+    }
+
+    // role === "system": carried by the pi_system prompt section instead.
+  }
+
+  return parts.join("\n\n");
+}
+
+export interface PriorHistoryInfo {
+  /** Serialized transcript of everything before the current turn ("" when none). */
+  priorHistory: string;
+  /** True when the previous assistant turn came from a different provider. */
+  isExternalSwitch: boolean;
+}
+
+/**
+ * Stable identifier for the leaf of a turn, used as the rewind-binding key.
+ * pi session entries carry `id`, but runtime messages may not; falling back to a
+ * positional key keeps rewind tracking working either way.
+ */
+export function resolveLeafKey(
+  leaf: { id?: string; role?: string; timestamp?: number } | undefined,
+  messageCount: number
+): string {
+  if (leaf?.id) return leaf.id;
+  if (leaf) {
+    return `${leaf.role ?? "unknown"}:${leaf.timestamp ?? 0}:${messageCount}`;
+  }
+  return `leaf:${messageCount}`;
+}
+
+/**
+ * Resolves which part of the transcript the Language Server cannot know on its own.
+ *
+ * A turn starts after the last assistant message, so everything up to and including
+ * that assistant message is "prior history". When the last assistant message came from
+ * another provider, our Cascade can never have observed the turns in between: the
+ * whole prefix has to be replayed and the Cascade restarted.
+ */
+export function resolvePriorHistory(
+  messages: Array<{ role: string; provider?: string; content?: any; [key: string]: any }>
+): PriorHistoryInfo {
+  let lastAssistantIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant") {
+      lastAssistantIndex = i;
+      break;
+    }
+  }
+
+  if (lastAssistantIndex < 0) {
+    return { priorHistory: "", isExternalSwitch: false };
+  }
+
+  const lastAssistant = messages[lastAssistantIndex];
+  const isExternalSwitch = typeof lastAssistant.provider === "string" && lastAssistant.provider !== PROVIDER_ID;
+  const priorHistory = formatConversationHistory(messages.slice(0, lastAssistantIndex + 1));
+
+  return { priorHistory, isExternalSwitch };
 }
 
 /**
@@ -153,15 +271,22 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           }
         }
 
+        // Resolve what the Language Server cannot know on its own: history from turns
+        // that happened before this Cascade existed (e.g. on another provider).
+        const { priorHistory, isExternalSwitch } = resolvePriorHistory(context.messages as any);
+
         // Get or synchronize the turn's Cascade
-        const cascade = await cascadeManager.ensureTurnCascade({
+        const turn = await cascadeManager.ensureTurnCascade({
           sessionId,
           branch: context.messages as any,
           modelId: numericModelId,
           modelName,
           systemPrompt,
           mcpServerName: mcpServer?.serverName,
+          priorHistory,
+          isExternalSwitch,
         });
+        const cascade = turn.cascade;
 
         // 2. Prepare listeners BEFORE sending user message to eliminate any event-loss races (D-05)
         let textBlock: TextContent | null = null;
@@ -360,11 +485,13 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
               // ignore usage errors
             }
 
-            // Record turn end for rewind binding BEFORE ending stream
+            // Record turn end for rewind binding BEFORE ending stream.
+            // pi's runtime messages do not always carry an `id` (only session entries do),
+            // so fall back to a stable positional key; otherwise rewind tracking silently
+            // stops recording anything after the first id-less turn.
             const currentLeaf = context.messages[context.messages.length - 1] as any;
-            if (currentLeaf?.id) {
-              await cascadeManager.recordTurnEnd(sessionId, currentLeaf.id, cascade);
-            }
+            const leafKey = resolveLeafKey(currentLeaf, context.messages.length);
+            await cascadeManager.recordTurnEnd(sessionId, leafKey, cascade);
 
             message.stopReason = "stop";
             stream.push({ type: "done", reason: "stop", message });
@@ -417,6 +544,9 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
             modelName,
             systemPrompt,
             mcpServerName: mcpServer?.serverName,
+            // History the Cascade never saw: empty while it continues normally, since
+            // its own trajectory already holds those turns.
+            conversationHistory: turn.priorHistory,
           }) as any;
 
           // Send each user message sequentially to create distinct USER_INPUT steps in the trajectory (D-03)
