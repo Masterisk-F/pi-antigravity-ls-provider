@@ -87,7 +87,10 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           }
         }
 
-        const { numericId: numericModelId, modelName } = modelCatalog.resolveModel(model.id);
+        const { numericId: numericModelId, modelName } = modelCatalog.resolveModel(
+          model.id,
+          options?.reasoning
+        );
 
         // Extract system prompt
         let systemPrompt = "You are an expert AI software engineer operating as a coding agent.";
