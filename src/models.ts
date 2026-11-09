@@ -1,12 +1,13 @@
 /**
  * Model catalog for Antigravity LS Provider.
- * Includes Gemini 3.8 Flash and the full production model suite.
+ * Includes Gemini 3.8 Flash (Low, Medium, High) and the full production model suite.
  */
 
 export interface AntigravityModelDefinition {
   id: string;
   name: string;
   numericId: number;
+  modelName?: string;
   type: "chat";
   reasoning: boolean;
   input: ["text"];
@@ -17,9 +18,46 @@ export interface AntigravityModelDefinition {
 
 export const ANTIGRAVITY_LS_MODELS: AntigravityModelDefinition[] = [
   {
-    id: "Gemini_3_8_Flash",
-    name: "Gemini 3.8 Flash",
+    id: "Gemini_3_8_Flash_Low",
+    name: "Gemini 3.8 Flash (Low)",
     numericId: 1322,
+    modelName: "gemini-3.8-flash-low",
+    type: "chat",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1000000,
+    maxTokens: 64000,
+  },
+  {
+    id: "Gemini_3_8_Flash_Medium",
+    name: "Gemini 3.8 Flash (Medium)",
+    numericId: 1322,
+    modelName: "gemini-3.8-flash-medium",
+    type: "chat",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1000000,
+    maxTokens: 64000,
+  },
+  {
+    id: "Gemini_3_8_Flash_High",
+    name: "Gemini 3.8 Flash (High)",
+    numericId: 1322,
+    modelName: "gemini-3.8-flash-high",
+    type: "chat",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1000000,
+    maxTokens: 64000,
+  },
+  {
+    id: "Gemini_3_8_Flash",
+    name: "Gemini 3.8 Flash (Medium default)",
+    numericId: 1322,
+    modelName: "gemini-3.8-flash-medium",
     type: "chat",
     reasoning: true,
     input: ["text"],
@@ -146,7 +184,7 @@ export class ModelCatalog {
     for (const m of ANTIGRAVITY_LS_MODELS) {
       this.modelMap.set(m.id, m);
       this.modelMap.set(`antigravity-ls/${m.id}`, m);
-      // also alias with dashes
+      this.modelMap.set(m.id.toLowerCase(), m);
       this.modelMap.set(m.id.replace(/_/g, "-"), m);
     }
   }
@@ -155,16 +193,22 @@ export class ModelCatalog {
     return ANTIGRAVITY_LS_MODELS;
   }
 
-  resolveNumericModelId(idOrKey: string): number {
-    const found = this.modelMap.get(idOrKey);
-    if (found) return found.numericId;
-
-    // Check alias
+  resolveModel(idOrKey: string): { numericId: number; modelName?: string } {
     const normalized = idOrKey.replace(/^antigravity-ls\//, "");
-    const aliased = this.modelMap.get(normalized);
-    if (aliased) return aliased.numericId;
+    const found =
+      this.modelMap.get(idOrKey) ||
+      this.modelMap.get(normalized) ||
+      this.modelMap.get(normalized.toLowerCase());
 
-    // Default to Gemini 3.8 Flash
-    return 1322;
+    if (found) {
+      return { numericId: found.numericId, modelName: found.modelName };
+    }
+
+    // Default to Gemini 3.8 Flash Medium
+    return { numericId: 1322, modelName: "gemini-3.8-flash-medium" };
+  }
+
+  resolveNumericModelId(idOrKey: string): number {
+    return this.resolveModel(idOrKey).numericId;
   }
 }

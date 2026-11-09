@@ -13,6 +13,7 @@ export interface TurnContext {
   sessionId: string;
   branch: Array<{ id: string; [key: string]: any }>;
   modelId: number;
+  modelName?: string;
   systemPrompt: string;
 }
 
@@ -30,7 +31,7 @@ export class CascadeManager {
    * Handles history rewinding via revertToCascadeStep when branch diversion is detected.
    */
   async ensureTurnCascade(ctx: TurnContext): Promise<Cascade> {
-    const { sessionId, branch, modelId, systemPrompt } = ctx;
+    const { sessionId, branch, modelId, modelName, systemPrompt } = ctx;
     const client = await this.lsConnection.ensureClient();
     const binding = this.bindingStore.get(sessionId);
 
@@ -82,7 +83,7 @@ export class CascadeManager {
             await client.lsClient.revertToCascadeStep({
               cascadeId: binding.cascadeId,
               stepIndex: targetStepIndex,
-              overrideConfig: buildCascadeConfig({ modelId, systemPrompt }),
+              overrideConfig: buildCascadeConfig({ modelId, modelName, systemPrompt }),
             });
 
             // Clean up steps after targetEntryId

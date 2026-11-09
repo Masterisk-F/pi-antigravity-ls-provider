@@ -4,7 +4,7 @@
  * Configures the Antigravity planner to:
  * - Disable all builtin tools (forceDisable / enabled: false)
  * - Remove all 11 default prompt sections and inject pi's system prompt
- * - Request the specified model
+ * - Request the specified model ID and tiered wire modelName (e.g. gemini-3.8-flash-low)
  */
 
 export const BUILTIN_PROMPT_SECTIONS = [
@@ -23,11 +23,12 @@ export const BUILTIN_PROMPT_SECTIONS = [
 
 export interface CascadeConfigOptions {
   modelId: number;
+  modelName?: string;
   systemPrompt: string;
 }
 
 export function buildCascadeConfig(options: CascadeConfigOptions) {
-  const { modelId, systemPrompt } = options;
+  const { modelId, modelName, systemPrompt } = options;
 
   return {
     plannerConfig: {
@@ -35,6 +36,7 @@ export function buildCascadeConfig(options: CascadeConfigOptions) {
         case: "conversational" as const,
         value: { plannerMode: 1 },
       },
+      modelName: modelName || "",
       requestedModel: {
         choice: {
           case: "model" as const,

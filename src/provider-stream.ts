@@ -87,7 +87,7 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           }
         }
 
-        const numericModelId = modelCatalog.resolveNumericModelId(model.id);
+        const { numericId: numericModelId, modelName } = modelCatalog.resolveModel(model.id);
 
         // Extract system prompt
         let systemPrompt = "You are an expert AI software engineer operating as a coding agent.";
@@ -109,6 +109,7 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           sessionId,
           branch: context.messages as any,
           modelId: numericModelId,
+          modelName,
           systemPrompt,
         });
 
@@ -145,6 +146,7 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
               clientType: 1,
               cascadeConfig: buildCascadeConfig({
                 modelId: numericModelId,
+                modelName,
                 systemPrompt,
               }) as any,
             });
