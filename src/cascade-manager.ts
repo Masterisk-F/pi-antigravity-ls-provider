@@ -28,6 +28,7 @@ export class CascadeManager {
 
   /**
    * Prepares and synchronizes a Cascade for the upcoming turn.
+   * Reuses in-memory Cascade if active, or resumes from binding on session start.
    * Handles history rewinding via revertToCascadeStep when branch diversion is detected.
    */
   async ensureTurnCascade(ctx: TurnContext): Promise<Cascade> {
@@ -37,11 +38,15 @@ export class CascadeManager {
 
     const currentLeafId = branch.length > 0 ? branch[branch.length - 1].id : "";
 
-    let cascade: Cascade | null = null;
+    // 1. Prefer existing in-memory Cascade instance for this session (avoid repeat id subscriptions)
+    let cascade: Cascade | null = this.activeCascades.get(sessionId) || null;
 
-    if (binding?.cascadeId) {
+    // 2. If not in memory (e.g. fresh pi restart), resume from stored binding
+    if (!cascade && binding?.cascadeId) {
       try {
         cascade = await client.resumeCascade(binding.cascadeId);
+        this.attachListeners(cascade);
+        this.activeCascades.set(sessionId, cascade);
       } catch (e: any) {
         if (this.verbose) {
           console.error(`[CascadeManager] Could not resume cascade ${binding.cascadeId}: ${e.message}`);
@@ -51,11 +56,16 @@ export class CascadeManager {
     }
 
     if (cascade && binding) {
-      // Check for history rewind or divergence
-      if (binding.lastLeafId && binding.lastLeafId !== currentLeafId) {
+      // Check for history rewind or divergence:
+      // If the previous turn's leaf still exists anywhere in the current branch, we are continuing normally.
+      // If it does NOT exist, the branch was rewound / forked to a past point!
+      const branchEntryIds = new Set(branch.map((b) => b.id));
+      const isRewound = Boolean(binding.lastLeafId && !branchEntryIds.has(binding.lastLeafId));
+
+      if (isRewound) {
         if (this.verbose) {
           console.error(
-            `[CascadeManager] Branch divergence detected! lastLeafId=${binding.lastLeafId}, currentLeafId=${currentLeafId}`
+            `[CascadeManager] History rewind detected! previousLeafId=${binding.lastLeafId} not in branch.`
           );
         }
 
@@ -100,16 +110,20 @@ export class CascadeManager {
             this.bindingStore.set(sessionId, binding);
           } catch (err: any) {
             console.error(`[CascadeManager] Failed to revert cascade: ${err.message}. Starting fresh.`);
+            this.disposeCascade(sessionId);
             cascade = null;
           }
         } else {
           // No common ancestor found in this cascade; start a new cascade
+          this.disposeCascade(sessionId);
           cascade = null;
         }
       }
     }
 
     if (!cascade) {
+      this.disposeCascade(sessionId);
+
       if (this.verbose) {
         console.error(`[CascadeManager] Starting fresh cascade for session ${sessionId}`);
       }
@@ -120,16 +134,16 @@ export class CascadeManager {
         lastLeafId: currentLeafId,
         steps: {},
       });
-    }
 
-    // Attach auto-approval for MCP tool permissions
-    this.attachAutoApproval(cascade);
-    this.activeCascades.set(sessionId, cascade);
+      this.attachListeners(cascade);
+      this.activeCascades.set(sessionId, cascade);
+    }
 
     return cascade;
   }
 
-  private attachAutoApproval(cascade: Cascade): void {
+  private attachListeners(cascade: Cascade): void {
+    // 1. Auto-approve MCP tool interactions
     cascade.on("interaction", async (req: any) => {
       if (this.verbose) {
         console.error(`[CascadeManager] Interaction on step ${req.stepIndex}: ${req.type} - ${req.description}`);
@@ -143,6 +157,30 @@ export class CascadeManager {
         console.error(`[CascadeManager] Failed to auto-approve interaction: ${err.message}`);
       }
     });
+
+    // 2. Safe error handler to prevent uncaughtException crash
+    cascade.on("error", (err: any) => {
+      const msg = err?.message || String(err);
+      if (msg.includes("subscription closed by repeat id") || err?.code === 1) {
+        // Expected when a subscription is superseded or reset
+        return;
+      }
+      if (this.verbose) {
+        console.error(`[CascadeManager] Stream error (non-fatal): ${msg}`);
+      }
+    });
+  }
+
+  private disposeCascade(sessionId: string): void {
+    const old = this.activeCascades.get(sessionId);
+    if (old) {
+      try {
+        old.dispose();
+      } catch {
+        // ignore
+      }
+      this.activeCascades.delete(sessionId);
+    }
   }
 
   /**
@@ -174,26 +212,13 @@ export class CascadeManager {
 
   clearSession(sessionId: string): void {
     this.bindingStore.remove(sessionId);
-    const cascade = this.activeCascades.get(sessionId);
-    if (cascade) {
-      try {
-        cascade.dispose();
-      } catch {
-        // ignore
-      }
-      this.activeCascades.delete(sessionId);
-    }
+    this.disposeCascade(sessionId);
   }
 
   clearAll(): void {
     this.bindingStore.clear();
-    for (const cascade of this.activeCascades.values()) {
-      try {
-        cascade.dispose();
-      } catch {
-        // ignore
-      }
+    for (const [sessionId] of this.activeCascades) {
+      this.disposeCascade(sessionId);
     }
-    this.activeCascades.clear();
   }
 }

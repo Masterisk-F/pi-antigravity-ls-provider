@@ -160,11 +160,13 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         let textBlock: TextContent | null = null;
         let thinkingBlock: ThinkingContent | null = null;
         let isDone = false;
+        let hasStarted = false;
 
         const cleanupListeners = () => {
           cascade.off("text", onText);
           cascade.off("thinking", onThinking);
           cascade.off("statusChange", onStatusChange);
+          cascade.off("stepNew", onStepNew);
           roundTrip.off("park", onPark);
           signal?.removeEventListener("abort", onAbort);
         };
@@ -182,8 +184,13 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
 
         signal?.addEventListener("abort", onAbort, { once: true });
 
+        const onStepNew = () => {
+          hasStarted = true;
+        };
+
         const onText = (d: { delta: string; fullText?: string }) => {
           if (isDone) return;
+          hasStarted = true;
           if (!textBlock) {
             textBlock = { type: "text", text: "" };
             message.content.push(textBlock);
@@ -202,6 +209,7 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
 
         const onThinking = (d: { delta: string }) => {
           if (isDone) return;
+          hasStarted = true;
           if (!thinkingBlock) {
             thinkingBlock = { type: "thinking", thinking: "" };
             message.content.push(thinkingBlock);
@@ -280,7 +288,17 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
 
         const onStatusChange = async (ev: { status: string }) => {
           if (isDone) return;
+          if (ev.status === "running") {
+            hasStarted = true;
+            return;
+          }
+
           if (ev.status === "idle") {
+            // Ignore idle events before the turn actually started
+            if (!hasStarted) {
+              return;
+            }
+
             // Only finalize if no tool call is currently parked
             if (roundTrip.hasParkedCalls()) {
               return;
@@ -335,21 +353,20 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
               // ignore usage errors
             }
 
-            message.stopReason = "stop";
-            stream.push({ type: "done", reason: "stop", message });
-            stream.end(message);
-
-            // Record turn end for rewind binding
+            // Record turn end for rewind binding BEFORE ending stream
             const currentLeaf = context.messages[context.messages.length - 1] as any;
             if (currentLeaf?.id) {
               await cascadeManager.recordTurnEnd(sessionId, currentLeaf.id, cascade);
             }
 
-            // In headless/print mode (pi -p), cleanup cascade listener so Node can exit cleanly
+            message.stopReason = "stop";
+            stream.push({ type: "done", reason: "stop", message });
+            stream.end(message);
+
+            // In one-shot print mode (pi -p), cleanup cascade listener so Node can exit cleanly
             const isOneShot =
               process.argv.includes("-p") ||
-              process.argv.includes("--print") ||
-              !process.stdin.isTTY;
+              process.argv.includes("--print");
             if (isOneShot) {
               setTimeout(() => {
                 try {
@@ -365,6 +382,7 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         cascade.on("text", onText);
         cascade.on("thinking", onThinking);
         cascade.on("statusChange", onStatusChange);
+        cascade.on("stepNew", onStepNew);
         roundTrip.on("park", onPark);
 
       } catch (err: any) {
