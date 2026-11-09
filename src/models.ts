@@ -1,6 +1,6 @@
 /**
  * Model catalog for Antigravity LS Provider.
- * Hardcoded verified model definitions for fast, synchronous extension startup.
+ * Includes Gemini 3.8 Flash and the full production model suite.
  */
 
 export interface AntigravityModelDefinition {
@@ -16,6 +16,17 @@ export interface AntigravityModelDefinition {
 }
 
 export const ANTIGRAVITY_LS_MODELS: AntigravityModelDefinition[] = [
+  {
+    id: "Gemini_3_8_Flash",
+    name: "Gemini 3.8 Flash",
+    numericId: 1322,
+    type: "chat",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1000000,
+    maxTokens: 64000,
+  },
   {
     id: "Gemini_4_Argon_Low",
     name: "Gemini 4 Argon (Low)",
@@ -135,6 +146,8 @@ export class ModelCatalog {
     for (const m of ANTIGRAVITY_LS_MODELS) {
       this.modelMap.set(m.id, m);
       this.modelMap.set(`antigravity-ls/${m.id}`, m);
+      // also alias with dashes
+      this.modelMap.set(m.id.replace(/_/g, "-"), m);
     }
   }
 
@@ -146,7 +159,12 @@ export class ModelCatalog {
     const found = this.modelMap.get(idOrKey);
     if (found) return found.numericId;
 
-    // Default fallback
-    return 1419;
+    // Check alias
+    const normalized = idOrKey.replace(/^antigravity-ls\//, "");
+    const aliased = this.modelMap.get(normalized);
+    if (aliased) return aliased.numericId;
+
+    // Default to Gemini 3.8 Flash
+    return 1322;
   }
 }

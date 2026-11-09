@@ -1,10 +1,13 @@
 /**
  * LS Connection Manager
  *
- * Manages connection to Antigravity Language Server (running process or launched standalone).
+ * Launches and connects to Antigravity Language Server with authentic Antigravity IDE flags,
+ * enabling Gemini 3.8 Flash and the full production model suite.
  */
 
 import { AntigravityClient, type ServerInfo } from "antigravity-client";
+import { spawn, type ChildProcess } from "node:child_process";
+import * as crypto from "node:crypto";
 import * as path from "node:path";
 import * as fs from "node:fs";
 
@@ -13,8 +16,11 @@ export interface LsConnectionOptions {
   verbose?: boolean;
 }
 
+const DEFAULT_LS_BINARY = "/opt/Antigravity/resources/bin/language_server";
+
 export class LsConnection {
-  private client: (AntigravityClient & { launcher?: any }) | null = null;
+  private client: AntigravityClient | null = null;
+  private lsProcess: ChildProcess | null = null;
   private connectingPromise: Promise<AntigravityClient> | null = null;
   private workspacePath: string;
   private verbose: boolean;
@@ -31,11 +37,9 @@ export class LsConnection {
   async ensureClient(): Promise<AntigravityClient> {
     if (this.client) {
       try {
-        // Quick heartbeat / status check
         await this.client.getUserStatus();
         return this.client;
       } catch {
-        // Connection dead, reconnect
         this.client = null;
       }
     }
@@ -52,56 +56,117 @@ export class LsConnection {
   }
 
   private async connectOrLaunch(): Promise<AntigravityClient> {
-    // 1. Try to discover any currently running Antigravity LS
+    // 1. Check for any running Antigravity LS
     try {
-      const servers: ServerInfo[] = await AntigravityClient.listServers();
+      const servers = await AntigravityClient.listServers();
       if (servers.length > 0) {
-        // Pick the most recent server
         const target = servers[0];
         const client = await AntigravityClient.connectWithServer(target);
         await client.getUserStatus();
         if (this.verbose) {
-          console.error(`[LsConnection] Connected to existing LS PID ${target.pid}`);
+          console.error(`[LsConnection] Reusing running LS PID ${target.pid}`);
         }
         this.client = client;
         return client;
       }
-    } catch (e: any) {
-      if (this.verbose) {
-        console.error(`[LsConnection] No running LS found: ${e.message}`);
-      }
-    }
-
-    // 2. Launch an independent LS process
-    if (this.verbose) {
-      console.error(`[LsConnection] Launching independent LS for workspace: ${this.workspacePath}`);
-    }
-
-    const clientWithLauncher = await AntigravityClient.launch({
-      workspacePath: this.workspacePath,
-      verbose: this.verbose,
-    });
-
-    // Allow Node event loop to exit naturally in one-shot CLI mode (pi -p)
-    try {
-      (clientWithLauncher.launcher as any).lsProcess?.unref();
-      (clientWithLauncher.launcher as any).mockServer?.server?.unref();
     } catch {
       // ignore
     }
 
-    // Monitor crash / exit
-    clientWithLauncher.launcher.on("exit", (code: number, signal: string) => {
-      if (this.verbose) {
-        console.error(`[LsConnection] LS process exited (code=${code}, signal=${signal})`);
-      }
-      if (this.client === clientWithLauncher) {
-        this.client = null;
-      }
+    // 2. Launch LS with authentic Antigravity IDE flags
+    if (this.verbose) {
+      console.error(`[LsConnection] Spawning authentic Antigravity LS for ${this.workspacePath}`);
+    }
+
+    const binary = fs.existsSync(DEFAULT_LS_BINARY)
+      ? DEFAULT_LS_BINARY
+      : (process.env.CODEIUM_LANGUAGE_SERVER_BIN || "language_server");
+
+    const csrfToken = crypto.randomUUID();
+
+    const args = [
+      "--standalone",
+      "--override_ide_name", "antigravity",
+      "--subclient_type", "hub",
+      "--override_ide_version", "1.107.0",
+      "--override_user_agent_name", "antigravity",
+      "--https_server_port", "0",
+      "--http_server_port", "0",
+      "--lsp_port", "0",
+      "--csrf_token", csrfToken,
+      "--app_data_dir", "antigravity",
+      "--api_server_url", "https://generativelanguage.googleapis.com",
+      "--cloud_code_endpoint", "https://daily-cloudcode-pa.googleapis.com",
+      "--enable_sidecars",
+    ];
+
+    const proc = spawn(binary, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env },
     });
 
-    this.client = clientWithLauncher;
-    return clientWithLauncher;
+    // Close stdin so LS starts normal event loop
+    proc.stdin.end();
+
+    // Prevent child process from blocking Node.js exit in one-shot mode
+    try {
+      proc.unref();
+    } catch {
+      // ignore
+    }
+
+    this.lsProcess = proc;
+
+    proc.on("exit", (code, signal) => {
+      if (this.verbose) {
+        console.error(`[LsConnection] LS exited (code=${code}, signal=${signal})`);
+      }
+      this.client = null;
+      this.lsProcess = null;
+    });
+
+    // Wait for the HTTPS port line
+    const httpsPort = await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error("Timeout waiting for Antigravity LS HTTPS port"));
+      }, 30000);
+
+      let resolved = false;
+
+      proc.stderr.on("data", (chunk: Buffer) => {
+        const text = chunk.toString();
+        const m = text.match(/listening on random port at (\d+) for HTTPS/i);
+        if (m && !resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          resolve(parseInt(m[1], 10));
+        }
+      });
+
+      proc.on("error", (err) => {
+        if (!resolved) {
+          clearTimeout(timer);
+          reject(err);
+        }
+      });
+    });
+
+    if (this.verbose) {
+      console.error(`[LsConnection] Authentic LS ready on HTTPS port ${httpsPort}`);
+    }
+
+    const serverInfo: ServerInfo = {
+      pid: proc.pid ?? 0,
+      httpPort: 0,
+      httpsPort,
+      csrfToken,
+      workspaceId: `antigravity-ls-${path.basename(this.workspacePath)}`,
+      startTime: new Date(),
+    };
+
+    const client = await AntigravityClient.connectWithServer(serverInfo);
+    this.client = client;
+    return client;
   }
 
   getClient(): AntigravityClient | null {
@@ -115,14 +180,16 @@ export class LsConnection {
       } catch {
         // ignore
       }
-      if (this.client.launcher) {
-        try {
-          await this.client.launcher.stop();
-        } catch {
-          // ignore
-        }
-      }
       this.client = null;
+    }
+
+    if (this.lsProcess && !this.lsProcess.killed) {
+      try {
+        this.lsProcess.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
+      this.lsProcess = null;
     }
   }
 }
