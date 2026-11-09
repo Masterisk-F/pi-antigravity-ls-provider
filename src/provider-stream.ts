@@ -34,6 +34,49 @@ export interface ProviderStreamDeps {
   verbose?: boolean;
 }
 
+/**
+ * Extracts all new user prompt texts for the current turn.
+ * If the current turn contains toolResult messages, returns an empty array (tool continuation).
+ */
+export function extractTurnUserPrompts(
+  messages: Array<{ role: string; content?: any }>
+): string[] {
+  let lastAssistantIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant") {
+      lastAssistantIndex = i;
+      break;
+    }
+  }
+
+  const turnMessages = messages.slice(lastAssistantIndex + 1);
+
+  // If the turn contains toolResult messages, this turn is a continuation of a parked tool call.
+  // The cascade is already resuming via MCP tool resolution; do NOT send another user message.
+  const hasToolResult = turnMessages.some((msg) => msg.role === "toolResult");
+  if (hasToolResult) {
+    return [];
+  }
+
+  const userTexts: string[] = [];
+  for (const msg of turnMessages) {
+    if (msg.role === "user") {
+      if (typeof msg.content === "string") {
+        const trimmed = msg.content.trim();
+        if (trimmed) userTexts.push(trimmed);
+      } else if (Array.isArray(msg.content)) {
+        const text = msg.content
+          .filter((b: any) => b.type === "text" && b.text)
+          .map((b: any) => b.text.trim())
+          .join("\n");
+        if (text) userTexts.push(text);
+      }
+    }
+  }
+
+  return userTexts;
+}
+
 export function createStreamSimple(deps: ProviderStreamDeps) {
   const { lsConnection, cascadeManager, roundTrip, modelCatalog, mcpServer, verbose } = deps;
 
@@ -350,23 +393,25 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         cascade.on("stepNew", onStepNew);
         roundTrip.on("park", onPark);
 
-        // 3. If the last message was a user message (not just toolResult continuation), send user prompt
-        const lastMsg = context.messages[context.messages.length - 1];
-        if (lastMsg && lastMsg.role === "user") {
-          let userPrompt = "";
-          if (typeof lastMsg.content === "string") {
-            userPrompt = lastMsg.content;
-          } else if (Array.isArray(lastMsg.content)) {
-            userPrompt = lastMsg.content
-              .filter((b: any) => b.type === "text")
-              .map((b: any) => b.text)
-              .join("\n");
-          }
+        // 3. Collect new user messages in the current turn and send prompts sequentially (D-01, D-02, D-03)
+        const userTexts = extractTurnUserPrompts(context.messages as any);
 
-          if (userPrompt.trim()) {
-            const client = await lsConnection.ensureClient();
+        if (userTexts.length > 0) {
+          const client = await lsConnection.ensureClient();
+          const cascadeConfig = buildCascadeConfig({
+            modelId: numericModelId,
+            modelName,
+            systemPrompt,
+            mcpServerName: mcpServer?.serverName,
+          }) as any;
+
+          // Send each user message sequentially to create distinct USER_INPUT steps in the trajectory (D-03)
+          for (let i = 0; i < userTexts.length; i++) {
+            const prompt = userTexts[i];
             if (verbose) {
-              console.error(`[provider-stream] Sending message to cascade ${cascade.cascadeId}`);
+              console.error(
+                `[provider-stream] Sending message ${i + 1}/${userTexts.length} to cascade ${cascade.cascadeId}: ${prompt.slice(0, 60)}...`
+              );
             }
 
             await client.lsClient.sendUserCascadeMessage({
@@ -378,15 +423,10 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
                 extensionVersion: "0.2.0",
               },
               cascadeId: cascade.cascadeId,
-              items: [{ chunk: { case: "text", value: userPrompt } }],
+              items: [{ chunk: { case: "text", value: prompt } }],
               blocking: false,
               clientType: 1,
-              cascadeConfig: buildCascadeConfig({
-                modelId: numericModelId,
-                modelName,
-                systemPrompt,
-                mcpServerName: mcpServer?.serverName,
-              }) as any,
+              cascadeConfig,
             });
           }
         }
