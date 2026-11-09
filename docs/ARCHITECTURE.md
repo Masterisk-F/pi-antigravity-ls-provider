@@ -200,3 +200,50 @@ It extracts `ChatModelMetadata.usage`:
 - `cacheReadTokens` / `cacheWriteTokens` → `message.usage.cacheRead` / `cacheWrite`
 
 This ensures Pi's token counters and status bars reflect exact counts.
+
+---
+
+## 6. Multi-Message Turns & Sequential Dispatching
+
+### Background: Extension Injections & Multi-Prompt Turns
+
+In Pi's architecture, extensions can inject contextual directives (such as Plannotator's planning-phase framing or workflow state) alongside user prompts via `custom_message` entries. When normalized for LLM dispatch (`convertToLlm`), these custom messages are projected as `role: "user"` messages.
+
+Consequently, a single prompt turn from the user may yield multiple consecutive `user` messages in `context.messages`:
+1. `user` message: The user's actual prompt text.
+2. `user` message (from `custom_message`): Extension instructions (e.g. `[PLANNOTATOR - PLANNING PHASE]...`).
+
+### The Sequential Dispatch Architecture
+
+Antigravity Language Server operates as a stateful agent. Rather than concatenating multiple messages into an arbitrary single string or naively reading only `context.messages[context.messages.length - 1]` (which drops the user prompt in favor of the framing directive), the provider dispatches user messages sequentially:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User
+    participant Pi as pi Core & Extensions
+    participant PS as provider-stream.ts
+    participant LS as Antigravity LS
+
+    User->>Pi: Prompt: "Refactor tool configuration"
+    Note over Pi: Extension injects framing message<br/>turnMessages = [userPrompt, framingMessage]
+    Pi->>PS: streamSimple(model, context)
+    PS->>PS: extractTurnUserPrompts(turnMessages)
+
+    PS->>LS: 1. sendUserCascadeMessage(userPrompt)
+    Note over LS: Trajectory Step 0: USER_INPUT (userPrompt)
+    PS->>LS: 2. sendUserCascadeMessage(framingMessage)
+    Note over LS: Trajectory Step 1: USER_INPUT (framingMessage)
+
+    Note over LS: Model synthesizes both inputs and starts reasoning<br/>Trajectory Step 2: PLANNER_RESPONSE
+    LS-->>PS: text and thinking deltas
+    PS-->>User: Response respecting both user prompt and extension rules
+```
+
+### Turn Extraction Rules
+
+The provider applies the following rules in `extractTurnUserPrompts`:
+1. **Turn Boundary Resolution**: Scans backwards for the last `assistant` message. All messages after this boundary belong to the current turn (`turnMessages`).
+2. **Tool Continuation Guard**: If `turnMessages` contains any `toolResult` message, the turn is an active resumption of a parked MCP tool call. Prompt dispatch is bypassed because the Language Server is already processing the MCP response.
+3. **Sequential Trajectory Steps**: For all `user` messages in the turn, `sendUserCascadeMessage` is awaited sequentially. The Language Server creates individual `CORTEX_STEP_TYPE_USER_INPUT` trajectory steps for each message, preserving clean message boundaries and ensuring no user prompts are lost.
+
