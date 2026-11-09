@@ -398,6 +398,20 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
 
         if (userTexts.length > 0) {
           const client = await lsConnection.ensureClient();
+
+          // pi may have changed its active tool set mid-session (plan mode, tool_search,
+          // --tools modifiers). Re-publish the MCP tool catalog so the LS schema matches.
+          if (mcpServer?.consumeToolSetChanged()) {
+            try {
+              await client.refreshMcpServers();
+              if (verbose) {
+                console.error(`[provider-stream] Active tool set changed; refreshed MCP servers`);
+              }
+            } catch {
+              // a stale tool schema is recoverable; never fail the turn for it
+            }
+          }
+
           const cascadeConfig = buildCascadeConfig({
             modelId: numericModelId,
             modelName,

@@ -30,6 +30,7 @@ export class McpBridgeServer {
   private instanceId: string | number;
   private verbose: boolean;
   private registeredConfigPaths: string[] = [];
+  private lastSyncedToolSignature: string | null = null;
 
   constructor(options: McpServerOptions) {
     this.toolsProvider = options.toolsProvider;
@@ -41,6 +42,29 @@ export class McpBridgeServer {
 
   get serverName(): string {
     return `pi-tools-${this.instanceId}`;
+  }
+
+  private toolSignature(tools: ToolInfo[]): string {
+    return tools
+      .map((t) => t.name)
+      .sort()
+      .join(",");
+  }
+
+  private recordToolSignature(tools: ToolInfo[]): void {
+    this.lastSyncedToolSignature = this.toolSignature(tools);
+  }
+
+  /**
+   * Whether the active tool set changed since the Language Server last received `tools/list`.
+   * Consumes the change: the first caller after a change gets `true`, later callers get `false`.
+   * This lets the provider refresh the LS tool catalog only on turns where it actually moved.
+   */
+  consumeToolSetChanged(): boolean {
+    const current = this.toolSignature(this.toolsProvider());
+    const changed = this.lastSyncedToolSignature !== null && current !== this.lastSyncedToolSignature;
+    this.lastSyncedToolSignature = current;
+    return changed;
   }
 
   get listeningPort(): number {
@@ -159,7 +183,10 @@ export class McpBridgeServer {
     }
 
     if (method === "tools/list") {
+      // Published tools are exactly what toolsProvider() returns (already filtered to pi's
+      // active tool set upstream). No hardcoded exclusion list belongs here.
       const allTools = this.toolsProvider();
+      this.recordToolSignature(allTools);
       const mcpTools = allTools.map((t) => ({
         name: t.name,
         description: t.description || `Pi tool ${t.name}`,

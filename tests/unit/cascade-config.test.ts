@@ -23,11 +23,48 @@ describe("CascadeConfig Builder (Declarative Mixin)", () => {
     assert.equal(tools[0].source.value, "pi-tools");
     assert.equal(tools[0].match.value, ".*");
 
-    // Prompt section contains only pi_system
+    // Prompt section contains only pi_system, with pi's prompt passed through unchanged
     const sections = mixin.value.promptSections;
     assert.equal(sections.length, 1);
     assert.equal(sections[0].item.value.title, "pi_system");
-    assert.ok(sections[0].item.value.content.includes("Custom Pi Instructions"));
-    assert.ok(sections[0].item.value.content.includes("CRITICAL TOOL USE DIRECTIVE"));
+    assert.equal(sections[0].item.value.content, "Custom Pi Instructions");
+  });
+
+  test("does not prepend any extra tool directive to pi's system prompt", () => {
+    const config = buildCascadeConfig({
+      modelId: 1419,
+      systemPrompt: "pi system prompt",
+    });
+
+    const content =
+      config.plannerConfig.plannerTypeConfig.value.promptSections[0].item.value.content;
+
+    assert.equal(content.includes("CRITICAL TOOL USE DIRECTIVE"), false);
+    assert.equal(content.includes("Antigravity built-in tools"), false);
+    assert.equal(content.startsWith("#"), false);
+  });
+
+  test("falls back to a default prompt when systemPrompt is empty", () => {
+    const config = buildCascadeConfig({
+      modelId: 1419,
+      systemPrompt: "",
+    });
+
+    const content =
+      config.plannerConfig.plannerTypeConfig.value.promptSections[0].item.value.content;
+
+    assert.ok(content.length > 0);
+    assert.equal(content.includes("CRITICAL TOOL USE DIRECTIVE"), false);
+  });
+
+  test("uses the instance-unique MCP server name as the tool provider", () => {
+    const config = buildCascadeConfig({
+      modelId: 1419,
+      systemPrompt: "prompt",
+      mcpServerName: "pi-tools-4321",
+    });
+
+    const tools = config.plannerConfig.plannerTypeConfig.value.tools;
+    assert.equal(tools[0].source.value, "pi-tools-4321");
   });
 });

@@ -5,7 +5,7 @@
  * Runs in complete process and directory isolation per pi instance.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { LsConnection } from "./ls-connection.js";
 import { RoundTrip } from "./tool-bridge/round-trip.js";
 import { McpBridgeServer } from "./tool-bridge/mcp-server.js";
@@ -14,12 +14,24 @@ import { ModelCatalog } from "./models.js";
 import { createStreamSimple } from "./provider-stream.js";
 import { BindingStore } from "./bindings.js";
 
+/**
+ * Returns only the tools pi currently declares to the model (`pi.getActiveTools()`).
+ * `pi.getAllTools()` also lists registered-but-inactive tools (grep, ls, find, powershell,
+ * deferred MCP tools, ...) which the model must never be offered over MCP.
+ */
+export function getActivePiTools(
+  pi: Pick<ExtensionAPI, "getAllTools" | "getActiveTools">
+): ToolInfo[] {
+  const activeNames = new Set(pi.getActiveTools());
+  return pi.getAllTools().filter((tool) => activeNames.has(tool.name));
+}
+
 export default async function (pi: ExtensionAPI) {
   const roundTrip = new RoundTrip();
   const bindingStore = new BindingStore();
 
   const mcpServer = new McpBridgeServer({
-    toolsProvider: () => pi.getAllTools(),
+    toolsProvider: () => getActivePiTools(pi),
     roundTrip,
     verbose: false,
   });

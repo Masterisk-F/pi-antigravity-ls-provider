@@ -107,14 +107,14 @@ plannerConfig: {
           source: { case: "providerName", value: "pi-tools" },
         },
       ],
-      // 2. Override default prompt sections with pure Pi instructions
+      // 2. Pass pi's system prompt through unchanged
       promptSections: [
         {
           item: {
             case: "custom",
             value: {
               title: "pi_system",
-              content: combinedPrompt,
+              content: systemPrompt,
             },
           },
         },
@@ -125,7 +125,11 @@ plannerConfig: {
 ```
 
 ### Resulting Function Schema
-The function schema presented to the model contains only Pi's active tools (e.g. `read`, `write`, `edit`, `bash`). Built-in file and shell tools are excluded at the schema level.
+The function schema presented to the model contains only pi's **active** tools (those returned by `pi.getActiveTools()`). `pi.getAllTools()` also lists registered-but-inactive tools (`grep`, `ls`, `find`, `powershell`, `deferred` MCP tools, ...) and none of those are published over MCP. There is no hardcoded exclusion list: the active set is the single source of truth.
+
+If pi changes its active tool set mid-session (plan mode, `tool_search`, `--tools` modifiers), `McpBridgeServer.consumeToolSetChanged()` notices the difference and `provider-stream.ts` calls `refreshMcpServers()` so the LS tool schema matches the new set before the next prompt is dispatched.
+
+The system prompt is passed through unchanged. The provider does not prepend any extra tool directive, because pi already builds its `<tools>` and `<rules>` sections describing exactly the tool set it declared.
 
 ---
 
