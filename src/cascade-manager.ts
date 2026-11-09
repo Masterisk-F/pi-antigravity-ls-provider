@@ -15,6 +15,7 @@ export interface TurnContext {
   modelId: number;
   modelName?: string;
   systemPrompt: string;
+  mcpServerName?: string;
 }
 
 export class CascadeManager {
@@ -93,7 +94,7 @@ export class CascadeManager {
             await client.lsClient.revertToCascadeStep({
               cascadeId: binding.cascadeId,
               stepIndex: targetStepIndex,
-              overrideConfig: buildCascadeConfig({ modelId, modelName, systemPrompt }),
+              overrideConfig: buildCascadeConfig({ modelId, modelName, systemPrompt, mcpServerName: ctx.mcpServerName }),
             });
 
             // Clean up steps after targetEntryId

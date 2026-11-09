@@ -2,6 +2,7 @@
  * pi-antigravity-ls-provider: Extension Entry Point
  *
  * Connects pi directly to Antigravity Language Server (official binary) via ConnectRPC.
+ * Runs in complete process and directory isolation per pi instance.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -16,12 +17,6 @@ import { BindingStore } from "./bindings.js";
 export default async function (pi: ExtensionAPI) {
   const roundTrip = new RoundTrip();
   const bindingStore = new BindingStore();
-  const lsConnection = new LsConnection({
-    workspacePath: process.cwd(),
-    verbose: false,
-  });
-  const modelCatalog = new ModelCatalog();
-  const cascadeManager = new CascadeManager(lsConnection, bindingStore, false);
 
   const mcpServer = new McpBridgeServer({
     toolsProvider: () => pi.getAllTools(),
@@ -29,10 +24,18 @@ export default async function (pi: ExtensionAPI) {
     verbose: false,
   });
 
-  // Ensure MCP HTTP bridge server is listening and registered in mcp_config.json
+  const lsConnection = new LsConnection({
+    workspacePath: process.cwd(),
+    mcpServer,
+    verbose: false,
+  });
+
+  const modelCatalog = new ModelCatalog();
+  const cascadeManager = new CascadeManager(lsConnection, bindingStore, false);
+
+  // Start MCP HTTP bridge server (listens on random available port)
   try {
     await mcpServer.start();
-    mcpServer.registerInMcpConfig();
   } catch (e: any) {
     console.error(`[antigravity-ls] Failed to start MCP bridge:`, e.message);
   }
@@ -44,6 +47,7 @@ export default async function (pi: ExtensionAPI) {
     cascadeManager,
     roundTrip,
     modelCatalog,
+    mcpServer,
     verbose: false,
   });
 
@@ -122,7 +126,7 @@ export default async function (pi: ExtensionAPI) {
       const report = [
         "=== Antigravity LS Provider Doctor ===",
         `LS Status:     ${lsStatus}`,
-        `MCP Server:    ${mcpServer.serverUrl} (Port: ${mcpServer.listeningPort})`,
+        `MCP Server:    ${mcpServer.serverUrl} (Key: ${mcpServer.serverName}, Port: ${mcpServer.listeningPort})`,
         `Loaded Models: ${models.length} models`,
         `Active Cascade: ${activeBinding?.cascadeId || "(none yet)"}`,
         `Rewind Points: ${Object.keys(activeBinding?.steps || {}).length} recorded steps`,

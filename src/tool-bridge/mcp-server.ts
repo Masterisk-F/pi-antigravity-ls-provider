@@ -1,5 +1,7 @@
 /**
  * Streamable HTTP MCP Server exposing all pi tools to Antigravity LS.
+ * Uses instance-unique server names (pi-tools-<pid>) to support multiple concurrent pi instances
+ * without port or configuration collision, while preserving user's existing MCP settings.
  */
 
 import * as http from "node:http";
@@ -15,6 +17,7 @@ export const TOKEN_HEADER = "x-bridge-token";
 export interface McpServerOptions {
   toolsProvider: () => ToolInfo[];
   roundTrip: RoundTrip;
+  instanceId?: string | number;
   verbose?: boolean;
 }
 
@@ -24,14 +27,20 @@ export class McpBridgeServer {
   private token: string;
   private toolsProvider: () => ToolInfo[];
   private roundTrip: RoundTrip;
+  private instanceId: string | number;
   private verbose: boolean;
   private registeredConfigPaths: string[] = [];
 
   constructor(options: McpServerOptions) {
     this.toolsProvider = options.toolsProvider;
     this.roundTrip = options.roundTrip;
+    this.instanceId = options.instanceId ?? process.pid;
     this.verbose = options.verbose ?? false;
     this.token = crypto.randomUUID();
+  }
+
+  get serverName(): string {
+    return `pi-tools-${this.instanceId}`;
   }
 
   get listeningPort(): number {
@@ -60,7 +69,7 @@ export class McpBridgeServer {
           this.port = addr.port;
         }
         if (this.verbose) {
-          console.error(`[McpBridgeServer] Listening on ${this.serverUrl}`);
+          console.error(`[McpBridgeServer] Listening on ${this.serverUrl} (${this.serverName})`);
         }
         this.server!.unref();
         resolve(this.port);
@@ -135,7 +144,7 @@ export class McpBridgeServer {
               tools: {},
             },
             serverInfo: {
-              name: "pi-tools",
+              name: this.serverName,
               version: "1.0.0",
             },
           },
@@ -151,15 +160,11 @@ export class McpBridgeServer {
 
     if (method === "tools/list") {
       const allTools = this.toolsProvider();
-      // Filter out internal tools or tools that are not executable in standard pi loop
-      const nonExecutableInPi = new Set(["ls", "find", "advisor", "powershell"]);
-      const mcpTools = allTools
-        .filter((t) => !nonExecutableInPi.has(t.name))
-        .map((t) => ({
-          name: t.name,
-          description: t.description || `Pi tool ${t.name}`,
-          inputSchema: t.parameters || { type: "object", properties: {} },
-        }));
+      const mcpTools = allTools.map((t) => ({
+        name: t.name,
+        description: t.description || `Pi tool ${t.name}`,
+        inputSchema: t.parameters || { type: "object", properties: {} },
+      }));
 
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
@@ -236,16 +241,14 @@ export class McpBridgeServer {
   }
 
   /**
-   * Register this MCP server in Antigravity's mcp_config.json so the LS discovers it.
+   * Safely registers this instance's unique MCP entry in mcp_config.json.
+   * Completely preserves all existing user/other-pi MCP configurations.
    */
-  registerInMcpConfig(customGeminiDir?: string): void {
+  registerInMcpConfig(): void {
     const configDirs = [
       path.join(os.homedir(), ".gemini", "config"),
+      path.join(os.homedir(), ".gemini", "antigravity"),
     ];
-
-    if (customGeminiDir) {
-      configDirs.push(path.join(customGeminiDir, "config"));
-    }
 
     for (const dir of configDirs) {
       try {
@@ -261,19 +264,27 @@ export class McpBridgeServer {
           }
         }
 
-        if (!config.mcpServers) config.mcpServers = {};
+        if (!config.mcpServers || typeof config.mcpServers !== "object") {
+          config.mcpServers = {};
+        }
 
-        config.mcpServers["pi-tools"] = {
+        // Add instance-unique server entry without clobbering other tools
+        config.mcpServers[this.serverName] = {
           url: this.serverUrl,
           headers: {
             [TOKEN_HEADER]: this.token,
           },
         };
 
+        // Clean up legacy static "pi-tools" entry if present
+        if (config.mcpServers["pi-tools"]) {
+          delete config.mcpServers["pi-tools"];
+        }
+
         fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2), "utf8");
         this.registeredConfigPaths.push(cfgPath);
         if (this.verbose) {
-          console.error(`[McpBridgeServer] Registered pi-tools in ${cfgPath}`);
+          console.error(`[McpBridgeServer] Registered ${this.serverName} in ${cfgPath}`);
         }
       } catch (e: any) {
         if (this.verbose) {
@@ -284,15 +295,15 @@ export class McpBridgeServer {
   }
 
   /**
-   * Cleanup registered mcp_config.json entries and shut down the HTTP server.
+   * Safely removes ONLY this instance's unique entry (pi-tools-<pid>), leaving all other tools intact.
    */
   async stop(): Promise<void> {
     for (const cfgPath of this.registeredConfigPaths) {
       try {
         if (fs.existsSync(cfgPath)) {
           const config = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
-          if (config?.mcpServers?.["pi-tools"]) {
-            delete config.mcpServers["pi-tools"];
+          if (config?.mcpServers?.[this.serverName]) {
+            delete config.mcpServers[this.serverName];
             fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2), "utf8");
           }
         }

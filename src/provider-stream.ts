@@ -23,16 +23,19 @@ import type { RoundTrip, ParkEvent } from "./tool-bridge/round-trip.js";
 import type { ModelCatalog } from "./models.js";
 import { buildCascadeConfig } from "./cascade-config.js";
 
+import type { McpBridgeServer } from "./tool-bridge/mcp-server.js";
+
 export interface ProviderStreamDeps {
   lsConnection: LsConnection;
   cascadeManager: CascadeManager;
   roundTrip: RoundTrip;
   modelCatalog: ModelCatalog;
+  mcpServer?: McpBridgeServer;
   verbose?: boolean;
 }
 
 export function createStreamSimple(deps: ProviderStreamDeps) {
-  const { lsConnection, cascadeManager, roundTrip, modelCatalog, verbose } = deps;
+  const { lsConnection, cascadeManager, roundTrip, modelCatalog, mcpServer, verbose } = deps;
 
   return function streamSimple(
     model: Model<any>,
@@ -114,49 +117,10 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           modelId: numericModelId,
           modelName,
           systemPrompt,
+          mcpServerName: mcpServer?.serverName,
         });
 
-        // 2. If the last message was a user message (not just toolResult continuation), send user prompt
-        const lastMsg = context.messages[context.messages.length - 1];
-        if (lastMsg && lastMsg.role === "user") {
-          let userPrompt = "";
-          if (typeof lastMsg.content === "string") {
-            userPrompt = lastMsg.content;
-          } else if (Array.isArray(lastMsg.content)) {
-            userPrompt = lastMsg.content
-              .filter((b: any) => b.type === "text")
-              .map((b: any) => b.text)
-              .join("\n");
-          }
-
-          if (userPrompt.trim()) {
-            const client = await lsConnection.ensureClient();
-            if (verbose) {
-              console.error(`[provider-stream] Sending message to cascade ${cascade.cascadeId}`);
-            }
-
-            await client.lsClient.sendUserCascadeMessage({
-              metadata: {
-                apiKey: (client as any).apiKey || "",
-                ideName: "vscode",
-                ideVersion: "1.107.0",
-                extensionName: "antigravity",
-                extensionVersion: "0.2.0",
-              },
-              cascadeId: cascade.cascadeId,
-              items: [{ chunk: { case: "text", value: userPrompt } }],
-              blocking: false,
-              clientType: 1,
-              cascadeConfig: buildCascadeConfig({
-                modelId: numericModelId,
-                modelName,
-                systemPrompt,
-              }) as any,
-            });
-          }
-        }
-
-        // 3. Listen to Cascade stream events and MCP park events
+        // 2. Prepare listeners BEFORE sending user message to eliminate any event-loss races (D-05)
         let textBlock: TextContent | null = null;
         let thinkingBlock: ThinkingContent | null = null;
         let isDone = false;
@@ -379,11 +343,53 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           }
         };
 
+        // Attach listeners prior to message dispatch
         cascade.on("text", onText);
         cascade.on("thinking", onThinking);
         cascade.on("statusChange", onStatusChange);
         cascade.on("stepNew", onStepNew);
         roundTrip.on("park", onPark);
+
+        // 3. If the last message was a user message (not just toolResult continuation), send user prompt
+        const lastMsg = context.messages[context.messages.length - 1];
+        if (lastMsg && lastMsg.role === "user") {
+          let userPrompt = "";
+          if (typeof lastMsg.content === "string") {
+            userPrompt = lastMsg.content;
+          } else if (Array.isArray(lastMsg.content)) {
+            userPrompt = lastMsg.content
+              .filter((b: any) => b.type === "text")
+              .map((b: any) => b.text)
+              .join("\n");
+          }
+
+          if (userPrompt.trim()) {
+            const client = await lsConnection.ensureClient();
+            if (verbose) {
+              console.error(`[provider-stream] Sending message to cascade ${cascade.cascadeId}`);
+            }
+
+            await client.lsClient.sendUserCascadeMessage({
+              metadata: {
+                apiKey: (client as any).apiKey || "",
+                ideName: "vscode",
+                ideVersion: "1.107.0",
+                extensionName: "antigravity",
+                extensionVersion: "0.2.0",
+              },
+              cascadeId: cascade.cascadeId,
+              items: [{ chunk: { case: "text", value: userPrompt } }],
+              blocking: false,
+              clientType: 1,
+              cascadeConfig: buildCascadeConfig({
+                modelId: numericModelId,
+                modelName,
+                systemPrompt,
+                mcpServerName: mcpServer?.serverName,
+              }) as any,
+            });
+          }
+        }
 
       } catch (err: any) {
         message.stopReason = "error";

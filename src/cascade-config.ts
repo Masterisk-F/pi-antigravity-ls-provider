@@ -11,6 +11,7 @@ export interface CascadeConfigOptions {
   modelId: number;
   modelName?: string;
   systemPrompt: string;
+  mcpServerName?: string;
 }
 
 export const PI_TOOLS_DIRECTIVE = `
@@ -28,7 +29,8 @@ When asked about a project or codebase, inspect the key directory structure with
 `;
 
 export function buildCascadeConfig(options: CascadeConfigOptions) {
-  const { modelId, modelName, systemPrompt } = options;
+  const { modelId, modelName, systemPrompt, mcpServerName } = options;
+  const targetProviderName = mcpServerName || "pi-tools";
 
   const combinedPrompt = [
     PI_TOOLS_DIRECTIVE,
@@ -40,13 +42,13 @@ export function buildCascadeConfig(options: CascadeConfigOptions) {
       plannerTypeConfig: {
         case: "declarativeMixinConfig" as const,
         value: {
-          // Whitelist ONLY tools from "pi-tools" MCP server.
+          // Whitelist ONLY tools from the instance's dedicated MCP server.
           // Built-in tools (read_file, run_command, etc.) are NOT in this list,
           // so the Language Server never includes them in the model's function schema!
           tools: [
             {
               match: { case: "pattern" as const, value: ".*" },
-              source: { case: "providerName" as const, value: "pi-tools" },
+              source: { case: "providerName" as const, value: targetProviderName },
             },
           ],
           promptSections: [
