@@ -27,6 +27,7 @@ describe("CascadeConfig Builder (Declarative Mixin)", () => {
     const sections = mixin.value.promptSections;
     assert.equal(sections.length, 1);
     assert.equal(sections[0].item.value.title, "pi_system");
-    assert.equal(sections[0].item.value.content, "Custom Pi Instructions");
+    assert.ok(sections[0].item.value.content.includes("Custom Pi Instructions"));
+    assert.ok(sections[0].item.value.content.includes("CRITICAL TOOL USE DIRECTIVE"));
   });
 });

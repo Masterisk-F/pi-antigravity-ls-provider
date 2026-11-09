@@ -151,12 +151,15 @@ export class McpBridgeServer {
 
     if (method === "tools/list") {
       const allTools = this.toolsProvider();
-      // Exclude internal tools if needed, but include all pi builtins and extensions
-      const mcpTools = allTools.map((t) => ({
-        name: t.name,
-        description: t.description || `Pi tool ${t.name}`,
-        inputSchema: t.parameters || { type: "object", properties: {} },
-      }));
+      // Filter out internal tools or tools that are not executable in standard pi loop
+      const nonExecutableInPi = new Set(["ls", "find", "advisor", "powershell"]);
+      const mcpTools = allTools
+        .filter((t) => !nonExecutableInPi.has(t.name))
+        .map((t) => ({
+          name: t.name,
+          description: t.description || `Pi tool ${t.name}`,
+          inputSchema: t.parameters || { type: "object", properties: {} },
+        }));
 
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
