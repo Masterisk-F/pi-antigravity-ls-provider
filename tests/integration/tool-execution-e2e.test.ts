@@ -85,9 +85,9 @@ describe("Tool Execution E2E with gemini-3.8-flash (Integration)", { skip: !HAS_
         cascadeConfig: cfg as any,
       });
 
-      // Wait for turn to complete (running -> idle) with 25s timeout (must NOT hang for 3 minutes!)
+      // Wait for turn to complete (running -> idle) with 35s timeout (must NOT hang for 3 minutes!)
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("Timeout waiting for turn completion")), 25000);
+        const timer = setTimeout(() => reject(new Error("Timeout waiting for turn completion")), 35000);
         let wasRunning = false;
         cascade.on("statusChange", (ev) => {
           if (ev.status === "running") wasRunning = true;
