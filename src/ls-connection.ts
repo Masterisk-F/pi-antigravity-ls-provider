@@ -19,7 +19,28 @@ export interface LsConnectionOptions {
   verbose?: boolean;
 }
 
+export const ANTIGRAVITY_IDE_VERSION = "2.28.1";
 const DEFAULT_LS_BINARY = "/opt/Antigravity/resources/bin/language_server";
+
+/**
+ * Checks whether a running Language Server process was started with a legacy IDE version.
+ * Older versions (e.g. 1.107.0) lack modern reasoning effort tier models (M318/M319/M320).
+ */
+export function isLegacyServer(server: ServerInfo): boolean {
+  if (!server.pid) return false;
+  try {
+    const cmdlinePath = `/proc/${server.pid}/cmdline`;
+    if (fs.existsSync(cmdlinePath)) {
+      const raw = fs.readFileSync(cmdlinePath, "utf8");
+      if (raw.includes("1.107.0")) {
+        return true;
+      }
+    }
+  } catch {
+    // If cmdline is unreadable (e.g. permission or container isolation), treat as non-legacy
+  }
+  return false;
+}
 
 export class LsConnection {
   private client: AntigravityClient | null = null;
@@ -67,15 +88,26 @@ export class LsConnection {
   private async connectOrLaunch(): Promise<AntigravityClient> {
     let client: AntigravityClient | null = null;
 
-    // 1. Check for any running Antigravity LS
+    // 1. Check for any running Antigravity LS (filtering out legacy/incompatible instances)
     try {
       const servers = await AntigravityClient.listServers();
-      if (servers.length > 0) {
-        const target = servers[0];
-        client = await AntigravityClient.connectWithServer(target);
-        await client.getUserStatus();
-        if (this.verbose) {
-          console.error(`[LsConnection] Reusing running LS PID ${target.pid}`);
+      for (const target of servers) {
+        if (isLegacyServer(target)) {
+          if (this.verbose) {
+            console.error(`[LsConnection] Skipping legacy LS PID ${target.pid}`);
+          }
+          continue;
+        }
+        try {
+          const candidate = await AntigravityClient.connectWithServer(target);
+          await candidate.getUserStatus();
+          client = candidate;
+          if (this.verbose) {
+            console.error(`[LsConnection] Reusing running LS PID ${target.pid}`);
+          }
+          break;
+        } catch {
+          // candidate failed, try next
         }
       }
     } catch {
@@ -98,11 +130,9 @@ export class LsConnection {
         "--standalone",
         "--override_ide_name", "antigravity",
         "--subclient_type", "hub",
-        "--override_ide_version", "1.107.0",
+        "--override_ide_version", ANTIGRAVITY_IDE_VERSION,
         "--override_user_agent_name", "antigravity",
         "--https_server_port", "0",
-        "--http_server_port", "0",
-        "--lsp_port", "0",
         "--csrf_token", csrfToken,
         "--app_data_dir", "antigravity",
         "--api_server_url", "https://generativelanguage.googleapis.com",

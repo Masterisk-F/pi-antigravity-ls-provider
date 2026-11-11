@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert";
 import * as fs from "node:fs";
-import { LsConnection } from "../../src/ls-connection.js";
+import { LsConnection, ANTIGRAVITY_IDE_VERSION } from "../../src/ls-connection.js";
 import { McpBridgeServer } from "../../src/tool-bridge/mcp-server.js";
 import { RoundTrip } from "../../src/tool-bridge/round-trip.js";
 import { ModelCatalog } from "../../src/models.js";
@@ -75,7 +75,7 @@ describe("Tool Execution E2E with gemini-3.8-flash (Integration)", { skip: !HAS_
         metadata: {
           apiKey: "",
           ideName: "vscode",
-          ideVersion: "1.107.0",
+          ideVersion: ANTIGRAVITY_IDE_VERSION,
           extensionName: "antigravity",
           extensionVersion: "0.2.0",
         },

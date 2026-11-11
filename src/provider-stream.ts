@@ -18,7 +18,7 @@ import {
   type ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import type { Cascade } from "antigravity-client";
-import type { LsConnection } from "./ls-connection.js";
+import { type LsConnection, ANTIGRAVITY_IDE_VERSION } from "./ls-connection.js";
 import type { CascadeManager } from "./cascade-manager.js";
 import type { RoundTrip, ParkEvent } from "./tool-bridge/round-trip.js";
 import type { ModelCatalog } from "./models.js";
@@ -489,6 +489,34 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
             isDone = true;
             cleanupListeners();
 
+            // Check if model terminated abnormally without producing any text or thinking blocks (D-03)
+            // (e.g. unknown model key in LS executor, quota rejection, or executor failure)
+            if (!textBlock && !thinkingBlock) {
+              try {
+                const client = await lsConnection.ensureClient();
+                const history = await client.lsClient.getCascadeTrajectory({ cascadeId: cascade.cascadeId });
+                const steps = history.trajectory?.steps || [];
+                const errStep = steps.find(
+                  (s: any) => s.type === "CORTEX_STEP_TYPE_ERROR_MESSAGE" || s.type === 17 || s.step?.case === "errorMessage"
+                );
+                if (errStep) {
+                  const errorObj = (errStep as any).errorMessage?.error || (errStep as any).step?.value?.error;
+                  const errMsg =
+                    errorObj?.shortError ||
+                    errorObj?.userErrorMessage ||
+                    errorObj?.modelErrorMessage ||
+                    "Language Server execution terminated due to error";
+                  message.stopReason = "error";
+                  message.errorMessage = errMsg;
+                  stream.push({ type: "error", reason: "error", error: message });
+                  stream.end(message);
+                  return;
+                }
+              } catch {
+                // fall through to normal completion if trajectory inspection fails
+              }
+            }
+
             if (thinkingBlock) {
               const idx = message.content.indexOf(thinkingBlock);
               stream.push({
@@ -612,7 +640,7 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
               metadata: {
                 apiKey: (client as any).apiKey || "",
                 ideName: "vscode",
-                ideVersion: "1.107.0",
+                ideVersion: ANTIGRAVITY_IDE_VERSION,
                 extensionName: "antigravity",
                 extensionVersion: "0.2.0",
               },
