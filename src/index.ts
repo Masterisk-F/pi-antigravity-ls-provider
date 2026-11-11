@@ -26,6 +26,30 @@ export function getActivePiTools(
   return pi.getAllTools().filter((tool) => activeNames.has(tool.name));
 }
 
+export interface DoctorReportParams {
+  lsStatus: string;
+  serverUrl: string;
+  serverName: string;
+  listeningPort: number;
+  modelsCount: number;
+  cascadeId?: string | null;
+}
+
+export function buildDoctorReport(params: DoctorReportParams): string {
+  return [
+    "=== Antigravity LS Provider Doctor ===",
+    `LS Status:     ${params.lsStatus}`,
+    `MCP Server:    ${params.serverUrl} (Key: ${params.serverName}, Port: ${params.listeningPort})`,
+    `Loaded Models: ${params.modelsCount} models`,
+    `Active Cascade: ${params.cascadeId || "(none yet)"}`,
+    "",
+    "Commands:",
+    "  /agls          - Show this status",
+    "  /agls clear    - Reset cascade binding for current session",
+    "  /agls clear-all- Reset all session cascade bindings",
+  ].join("\n");
+}
+
 export default async function (pi: ExtensionAPI) {
   const roundTrip = new RoundTrip();
   const bindingStore = new BindingStore();
@@ -155,19 +179,14 @@ export default async function (pi: ExtensionAPI) {
 
       const activeBinding = bindingStore.get(ctx.sessionManager.getSessionId());
 
-      const report = [
-        "=== Antigravity LS Provider Doctor ===",
-        `LS Status:     ${lsStatus}`,
-        `MCP Server:    ${mcpServer.serverUrl} (Key: ${mcpServer.serverName}, Port: ${mcpServer.listeningPort})`,
-        `Loaded Models: ${models.length} models`,
-        `Active Cascade: ${activeBinding?.cascadeId || "(none yet)"}`,
-        `Rewind Points: ${Object.keys(activeBinding?.steps || {}).length} recorded steps`,
-        "",
-        "Commands:",
-        "  /agls          - Show this status",
-        "  /agls clear    - Reset cascade binding for current session",
-        "  /agls clear-all- Reset all session cascade bindings",
-      ].join("\n");
+      const report = buildDoctorReport({
+        lsStatus,
+        serverUrl: mcpServer.serverUrl,
+        serverName: mcpServer.serverName,
+        listeningPort: mcpServer.listeningPort,
+        modelsCount: models.length,
+        cascadeId: activeBinding?.cascadeId,
+      });
 
       if (ctx.ui?.notify) {
         ctx.ui.notify(report, "info");

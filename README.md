@@ -76,7 +76,7 @@ Then register the package in `~/.pi/agent/settings.json`:
 ## Commands
 
 ### `/agls`
-Inspect provider status, running LS process info, active MCP bridge port, and recorded rewind checkpoints:
+Inspect provider status, running LS process info, active MCP bridge port, and active cascade ID:
 
 ```text
 === Antigravity LS Provider Doctor ===
@@ -84,7 +84,6 @@ LS Status:     Connected (Tier: Standard)
 MCP Server:    http://127.0.0.1:41235/mcp (Port: 41235)
 Loaded Models: 5 models
 Active Cascade: casc-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-Rewind Points: 4 recorded steps
 ```
 
 - `/agls` — Show diagnostic summary.
