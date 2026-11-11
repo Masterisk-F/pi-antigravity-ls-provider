@@ -120,7 +120,7 @@ export class CascadeManager {
           }
         }
 
-        if (targetEntryId !== null && targetStepIndex !== null) {
+        if (targetEntryId !== null && targetStepIndex !== null && targetStepIndex >= 0) {
           if (this.verbose) {
             console.error(
               `[CascadeManager] Reverting cascade ${binding.cascadeId} to stepIndex ${targetStepIndex} (entry ${targetEntryId})`
@@ -129,6 +129,13 @@ export class CascadeManager {
 
           try {
             await client.lsClient.revertToCascadeStep({
+              metadata: {
+                apiKey: (client as any).apiKey || "",
+                ideName: "vscode",
+                ideVersion: "1.107.0",
+                extensionName: "antigravity",
+                extensionVersion: "0.2.0",
+              },
               cascadeId: binding.cascadeId,
               stepIndex: targetStepIndex,
               overrideConfig: buildCascadeConfig({
@@ -157,6 +164,21 @@ export class CascadeManager {
             binding.lastLeafId = targetEntryId;
             binding.steps = newSteps;
             this.bindingStore.set(sessionId, binding);
+
+            // Purge client-side CascadeEventParser cache (lastEmittedText, _lastStepCount)
+            // by disposing the stale Cascade instance and resuming a fresh one from the
+            // rolled-back trajectory. This prevents past text lengths from swallowing new text deltas. (D-02)
+            this.disposeCascade(sessionId);
+            try {
+              cascade = await client.resumeCascade(binding.cascadeId);
+              this.attachListeners(cascade);
+              this.activeCascades.set(sessionId, cascade);
+            } catch (resumeErr: any) {
+              if (this.verbose) {
+                console.error(`[CascadeManager] Failed to resume cascade after revert: ${resumeErr.message}`);
+              }
+              cascade = null;
+            }
           } catch (err: any) {
             console.error(`[CascadeManager] Failed to revert cascade: ${err.message}. Starting fresh.`);
             this.disposeCascade(sessionId);
@@ -258,7 +280,7 @@ export class CascadeManager {
   }
 
   /**
-   * Records the completion of a turn, mapping the new leaf entry ID to the trajectory step count.
+   * Records the completion of a turn, mapping the new leaf entry ID to the 0-based final step index. (D-01)
    */
   async recordTurnEnd(sessionId: string, newLeafId: string, cascade: Cascade): Promise<void> {
     const binding = this.bindingStore.get(sessionId);
@@ -266,15 +288,20 @@ export class CascadeManager {
 
     try {
       const hist = await cascade.getHistory();
-      const stepCount = hist.trajectory?.steps?.length ?? 0;
+      const steps = hist.trajectory?.steps || [];
+      // Record 0-based index of the final step in the trajectory.
+      // revertToCascadeStep({ stepIndex }) retains steps up to and including stepIndex.
+      // Using stepCount - 1 ensures we roll back to the end of this turn rather than
+      // retaining the user input of the subsequent turn (off-by-one fix D-01).
+      const lastIndex = steps.length > 0 ? steps.length - 1 : 0;
 
       binding.lastLeafId = newLeafId;
-      binding.steps[newLeafId] = stepCount;
+      binding.steps[newLeafId] = lastIndex;
       this.bindingStore.set(sessionId, binding);
 
       if (this.verbose) {
         console.error(
-          `[CascadeManager] Recorded turn end: session=${sessionId}, leafId=${newLeafId}, steps=${stepCount}`
+          `[CascadeManager] Recorded turn end: session=${sessionId}, leafId=${newLeafId}, lastIndex=${lastIndex}`
         );
       }
     } catch (e: any) {

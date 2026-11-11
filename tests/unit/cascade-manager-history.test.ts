@@ -53,8 +53,10 @@ function createFakeClient(): { client: FakeClient; started: FakeCascade[]; rever
       started.push(cascade);
       return cascade;
     },
-    async resumeCascade() {
-      throw new Error("resume not expected in these tests");
+    async resumeCascade(cascadeId: string) {
+      const cascade = new FakeCascade(cascadeId);
+      started.push(cascade);
+      return cascade;
     },
     lsClient: {
       async revertToCascadeStep(args: any) {

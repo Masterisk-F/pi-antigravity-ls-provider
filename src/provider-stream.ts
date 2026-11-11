@@ -290,8 +290,33 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         let thinkingBlock: ThinkingContent | null = null;
         let isDone = false;
         let hasStarted = false;
+        let timeoutTimer: NodeJS.Timeout | null = null;
+
+        const clearTurnTimeout = () => {
+          if (timeoutTimer) {
+            clearTimeout(timeoutTimer);
+            timeoutTimer = null;
+          }
+        };
+
+        const resetTurnTimeout = (ms = 120000) => {
+          clearTurnTimeout();
+          timeoutTimer = setTimeout(() => {
+            if (isDone) return;
+            isDone = true;
+            cleanupListeners();
+            cascade.cancel().catch(() => {});
+            roundTrip.abortAll("Turn timed out");
+            message.stopReason = "error";
+            message.errorMessage = "Antigravity LS response timed out after 120s of inactivity.";
+            stream.push({ type: "error", reason: "error", error: message });
+            stream.end(message);
+          }, ms);
+          timeoutTimer?.unref?.();
+        };
 
         const cleanupListeners = () => {
+          clearTurnTimeout();
           cascade.off("text", onText);
           cascade.off("thinking", onThinking);
           cascade.off("statusChange", onStatusChange);
@@ -313,13 +338,38 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
 
         signal?.addEventListener("abort", onAbort, { once: true });
 
-        const onStepNew = () => {
+        const onStepNew = (ev: any) => {
           hasStarted = true;
+          resetTurnTimeout();
+
+          // Catch Antigravity LS execution errors (e.g. CORTEX_STEP_TYPE_ERROR_MESSAGE, type=17) (D-02)
+          if (ev?.step?.type === "errorMessage" || ev?.step?.type === 17) {
+            const raw = ev.step.raw;
+            const rawErr = raw?.step?.value?.error || raw?.errorMessage?.error;
+            const errMsg =
+              rawErr?.userErrorMessage ||
+              rawErr?.shortError ||
+              "Agent execution terminated due to error.";
+
+            if (verbose) {
+              console.error(`[provider-stream] LS error message step detected: ${errMsg}`);
+            }
+
+            if (isDone) return;
+            isDone = true;
+            cleanupListeners();
+
+            message.stopReason = "error";
+            message.errorMessage = errMsg;
+            stream.push({ type: "error", reason: "error", error: message });
+            stream.end(message);
+          }
         };
 
         const onText = (d: { delta: string; fullText?: string }) => {
           if (isDone) return;
           hasStarted = true;
+          resetTurnTimeout();
           if (!textBlock) {
             textBlock = { type: "text", text: "" };
             message.content.push(textBlock);
@@ -339,6 +389,7 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         const onThinking = (d: { delta: string }) => {
           if (isDone) return;
           hasStarted = true;
+          resetTurnTimeout();
           if (!thinkingBlock) {
             thinkingBlock = { type: "thinking", thinking: "" };
             message.content.push(thinkingBlock);
@@ -363,6 +414,8 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           if (verbose) {
             console.error(`[provider-stream] Parked tool call: ${p.toolName} (${p.callId})`);
           }
+
+          clearTurnTimeout();
 
           // Close text or thinking blocks if active
           if (thinkingBlock) {
@@ -570,6 +623,14 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
               cascadeConfig,
             });
           }
+
+          // Mark turn started and arm timeout now that messages have been sent (D-03, D-04)
+          hasStarted = true;
+          resetTurnTimeout();
+        } else {
+          // Tool continuation turn: LS is already executing based on resolved MCP tool result (D-03)
+          hasStarted = true;
+          resetTurnTimeout();
         }
 
       } catch (err: any) {

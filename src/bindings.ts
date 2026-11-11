@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 export interface SessionBinding {
   cascadeId: string;
   lastLeafId: string;
-  /** Map from pi entry id to the trajectory step count at that point */
+  /** Map from pi entry id to the 0-based index of the final trajectory step completed at that turn */
   steps: Record<string, number>;
   /**
    * Transcript of the conversation that happened before this Cascade was created
