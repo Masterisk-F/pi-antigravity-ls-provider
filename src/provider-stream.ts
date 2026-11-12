@@ -243,19 +243,6 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         await options?.onResponse?.({ status: 200, headers: {} }, model);
         stream.push({ type: "start", partial: message });
 
-        // 1. Check for incoming tool results to resolve parked MCP calls
-        const recentMessages = context.messages.slice(-5);
-        for (const msg of recentMessages) {
-          if (msg.role === "toolResult") {
-            const tr = msg as ToolResultMessage;
-            if (roundTrip.resolve(tr.toolCallId, tr)) {
-              if (verbose) {
-                console.error(`[provider-stream] Resolved parked MCP call for ${tr.toolCallId}`);
-              }
-            }
-          }
-        }
-
         const { numericId: numericModelId, modelName } = modelCatalog.resolveModel(
           model.id,
           options?.reasoning
@@ -629,6 +616,23 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         cascade.on("stepNew", onStepNew);
         roundTrip.on("park", onPark);
 
+        // Deliver tool results to Language Server now that all listeners are active (D-01):
+        // 1. Flush any results staged by pi.on("tool_result")
+        roundTrip.flushStagedResults();
+
+        // 2. Resolve from context.messages if any result was not staged (e.g. in test suites or direct calls)
+        const recentMessages = context.messages.slice(-5);
+        for (const msg of recentMessages) {
+          if (msg.role === "toolResult") {
+            const tr = msg as ToolResultMessage;
+            if (roundTrip.resolve(tr.toolCallId, tr)) {
+              if (verbose) {
+                console.error(`[provider-stream] Resolved parked MCP call for ${tr.toolCallId}`);
+              }
+            }
+          }
+        }
+
         // 3. Collect new user messages in the current turn and send prompts sequentially (D-01, D-02, D-03)
         const userTexts = extractTurnUserPrompts(context.messages as any);
 
@@ -687,9 +691,44 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           hasStarted = true;
           resetTurnTimeout();
         } else {
-          // Tool continuation turn: LS is already executing based on resolved MCP tool result (D-03)
+          // Tool continuation turn: LS is already executing based on resolved MCP tool result (D-01)
           hasStarted = true;
           resetTurnTimeout();
+
+          // Guard against already-idle or aborted cascade (D-03):
+          // If cascade is already idle with no active generation and no parked calls,
+          // check if an error occurred in LS trajectory rather than hanging for 120s.
+          if ((cascade.state.status as any) === "idle" || (cascade.state.status as any) === 1) {
+            queueMicrotask(async () => {
+              if (isDone) return;
+              try {
+                const client = await lsConnection.ensureClient();
+                const history = await client.lsClient.getCascadeTrajectory({ cascadeId: cascade.cascadeId });
+                const steps = history.trajectory?.steps || [];
+                const lastStep = steps.length > 0 ? steps[steps.length - 1] : null;
+                const errStep = steps.find(
+                  (s: any) => s.type === "CORTEX_STEP_TYPE_ERROR_MESSAGE" || s.type === 17 || s.step?.case === "errorMessage"
+                );
+                if (errStep || (lastStep && ((lastStep as any).status === 7 || (lastStep as any).status === "CORTEX_STEP_STATUS_ERROR"))) {
+                  const errorObj = (errStep as any)?.errorMessage?.error || (errStep as any)?.step?.value?.error || (lastStep as any)?.error;
+                  const errMsg =
+                    errorObj?.userErrorMessage ||
+                    errorObj?.shortError ||
+                    errorObj?.modelErrorMessage ||
+                    "Language Server execution terminated prematurely.";
+                  if (isDone) return;
+                  isDone = true;
+                  cleanupListeners();
+                  message.stopReason = "error";
+                  message.errorMessage = errMsg;
+                  stream.push({ type: "error", reason: "error", error: message });
+                  stream.end(message);
+                }
+              } catch {
+                // ignore
+              }
+            });
+          }
         }
 
       } catch (err: any) {

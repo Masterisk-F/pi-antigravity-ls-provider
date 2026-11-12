@@ -133,8 +133,17 @@ function isToolExecutionStep(step: any): boolean {
   return (
     step?.type === 132 ||
     step?.type === "CORTEX_STEP_TYPE_MCP_TOOL" ||
+    step?.type === "CORTEX_STEP_TYPE_GENERIC" ||
     step?.type === "generic" ||
     step?.step?.case === "generic"
+  );
+}
+
+function isPendingStep(step: any): boolean {
+  return (
+    step?.status === 1 ||
+    step?.status === "CORTEX_STEP_STATUS_PENDING" ||
+    step?.status === "pending"
   );
 }
 
@@ -474,15 +483,40 @@ export class CascadeManager {
         }
         assistantStepIdx = lastPlanner >= 0 ? lastPlanner : Math.max(0, steps.length - 2);
 
-        let lastGenericAfterPlanner = -1;
-        for (let i = steps.length - 1; i > assistantStepIdx; i--) {
+        let matchingGeneric = -1;
+        // Priority 1: Find the generic step currently RUNNING after assistantStepIdx (D-02)
+        for (let i = assistantStepIdx + 1; i < steps.length; i++) {
           if (isToolExecutionStep(steps[i])) {
-            lastGenericAfterPlanner = i;
-            break;
+            const status = steps[i]?.status;
+            if (status === 2 || status === "CORTEX_STEP_STATUS_RUNNING" || status === "running") {
+              matchingGeneric = i;
+              break;
+            }
           }
         }
+
+        // Priority 2: Find the most recent non-pending generic step after assistantStepIdx (D-02)
+        if (matchingGeneric === -1) {
+          for (let i = steps.length - 1; i > assistantStepIdx; i--) {
+            if (isToolExecutionStep(steps[i]) && !isPendingStep(steps[i])) {
+              matchingGeneric = i;
+              break;
+            }
+          }
+        }
+
+        // Priority 3 (fallback / synthetic test data): Earliest generic step after assistantStepIdx
+        if (matchingGeneric === -1) {
+          for (let i = assistantStepIdx + 1; i < steps.length; i++) {
+            if (isToolExecutionStep(steps[i])) {
+              matchingGeneric = i;
+              break;
+            }
+          }
+        }
+
         toolResultStepIdx =
-          lastGenericAfterPlanner >= 0 ? lastGenericAfterPlanner : assistantStepIdx + 1;
+          matchingGeneric >= 0 ? matchingGeneric : assistantStepIdx + 1;
       } else if (steps.length >= 2) {
         assistantStepIdx = steps.length - 2;
         toolResultStepIdx = steps.length - 1;
