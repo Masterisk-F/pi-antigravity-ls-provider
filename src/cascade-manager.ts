@@ -74,6 +74,14 @@ export function getBranchEntryKeys(
     keys.push(positional);
   }
 
+  // Position-independent timestamp key when timestamp is a valid positive number (D-04)
+  if (typeof entry.timestamp === "number" && entry.timestamp > 0) {
+    const timeKey = `${entry.role ?? "unknown"}:${entry.timestamp}`;
+    if (!keys.includes(timeKey)) {
+      keys.push(timeKey);
+    }
+  }
+
   if (entry.role === "toolResult" && typeof entry.toolCallId === "string" && entry.toolCallId.length > 0) {
     keys.push(`toolResult:${entry.toolCallId}`);
   }
@@ -87,11 +95,24 @@ export function getBranchEntryKeys(
       }
     }
     if (index > 0) {
-      const prev = branch[index - 1];
-      const prevPrimary = getEntryPrimaryKey(prev, index);
-      keys.push(`assistantAfter:${prevPrimary}`);
-      if (prev?.role === "toolResult" && typeof prev.toolCallId === "string" && prev.toolCallId.length > 0) {
-        keys.push(`assistantAfter:toolResult:${prev.toolCallId}`);
+      // Skip mid-conversation system patch messages when resolving the preceding entry for assistantAfter (D-04)
+      let prevIdx = index - 1;
+      while (prevIdx >= 0 && branch[prevIdx].role === "system") {
+        prevIdx--;
+      }
+      if (prevIdx >= 0) {
+        const prev = branch[prevIdx];
+        const prevPrimary = getEntryPrimaryKey(prev, prevIdx + 1);
+        keys.push(`assistantAfter:${prevPrimary}`);
+        if (typeof prev.timestamp === "number" && prev.timestamp > 0) {
+          const prevTimeKey = `assistantAfter:${prev.role ?? "unknown"}:${prev.timestamp}`;
+          if (!keys.includes(prevTimeKey)) {
+            keys.push(prevTimeKey);
+          }
+        }
+        if (prev?.role === "toolResult" && typeof prev.toolCallId === "string" && prev.toolCallId.length > 0) {
+          keys.push(`assistantAfter:toolResult:${prev.toolCallId}`);
+        }
       }
     }
   }
@@ -164,6 +185,7 @@ export class CascadeManager {
     if (!cascade && binding?.cascadeId) {
       try {
         cascade = await client.resumeCascade(binding.cascadeId);
+        this.seedResumedCascade(cascade);
         this.attachListeners(cascade);
         this.activeCascades.set(sessionId, cascade);
       } catch (e: any) {
@@ -177,6 +199,7 @@ export class CascadeManager {
     if (cascade && binding) {
       // Propagate recorded step indices across all alias keys of each branch entry so
       // toolResult:<callId> and assistantAfter:<parentKey> entries also bind to entry IDs.
+      let stepsPropagated = false;
       for (let i = 0; i < branch.length; i++) {
         const keys = getBranchEntryKeys(branch, i);
         let matchedStep: number | undefined;
@@ -188,7 +211,10 @@ export class CascadeManager {
         }
         if (matchedStep !== undefined) {
           for (const k of keys) {
-            binding.steps[k] = matchedStep;
+            if (binding.steps[k] !== matchedStep) {
+              binding.steps[k] = matchedStep;
+              stepsPropagated = true;
+            }
           }
         }
       }
@@ -292,6 +318,7 @@ export class CascadeManager {
             this.disposeCascade(sessionId);
             try {
               cascade = await client.resumeCascade(binding.cascadeId);
+              this.seedResumedCascade(cascade);
               this.attachListeners(cascade);
               this.activeCascades.set(sessionId, cascade);
             } catch (resumeErr: any) {
@@ -306,6 +333,9 @@ export class CascadeManager {
           this.disposeCascade(sessionId);
           cascade = null;
         }
+      } else if (stepsPropagated) {
+        // Persist propagated alias step keys for normal continuation (D-03)
+        this.bindingStore.set(sessionId, binding);
       }
     }
 
@@ -337,6 +367,20 @@ export class CascadeManager {
     // Reusing a Cascade: its own trajectory already holds every turn it produced, so
     // only the history it never saw (captured when it was created) is re-asserted.
     return { cascade, priorHistory: binding?.priorHistory ?? "" };
+  }
+
+  /**
+   * Seeds the resumed Cascade's internal event parser with its existing trajectory
+   * and IDLE status BEFORE any stream listeners are attached. (D-02)
+   */
+  private seedResumedCascade(cascade: Cascade): void {
+    const raw = cascade as any;
+    if (raw?.state) {
+      if (!raw.state.status) {
+        raw.state.status = 1; // CascadeRunStatus.IDLE
+      }
+      raw.eventParser?.parseState?.(raw.state);
+    }
   }
 
   private attachListeners(cascade: Cascade): void {
@@ -576,6 +620,16 @@ export class CascadeManager {
     }
   }
 
+  /**
+   * Disposes all active in-memory Cascade stream subscriptions without clearing
+   * persisted session bindings on disk. Called on session_shutdown / process exit. (D-01)
+   */
+  disposeAll(): void {
+    for (const [sessionId] of this.activeCascades) {
+      this.disposeCascade(sessionId);
+    }
+  }
+
   clearSession(sessionId: string): void {
     this.bindingStore.remove(sessionId);
     this.disposeCascade(sessionId);
@@ -583,8 +637,6 @@ export class CascadeManager {
 
   clearAll(): void {
     this.bindingStore.clear();
-    for (const [sessionId] of this.activeCascades) {
-      this.disposeCascade(sessionId);
-    }
+    this.disposeAll();
   }
 }

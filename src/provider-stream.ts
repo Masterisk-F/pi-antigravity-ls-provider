@@ -6,6 +6,7 @@
 
 import {
   contentText,
+  getCurrentSystemPrompt,
   createAssistantMessageEventStream,
   type AssistantMessage,
   type AssistantMessageEventStream,
@@ -260,19 +261,30 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           options?.reasoning
         );
 
-        // Extract system prompt
-        let systemPrompt = "You are an expert AI software engineer operating as a coding agent.";
-        for (const msg of context.messages) {
-          if (msg.role === "system") {
-            if (typeof msg.content === "string") {
-              systemPrompt = msg.content;
-            } else if (Array.isArray(msg.content)) {
-              systemPrompt = msg.content
-                .map((c: any) => c.text || "")
-                .filter(Boolean)
-                .join("\n");
+        // Extract system prompt with support for structured sections and mid-conversation patches (D-04)
+        const DEFAULT_SYSTEM_PROMPT = "You are an expert AI software engineer operating as a coding agent.";
+        let systemPrompt = "";
+        try {
+          systemPrompt = getCurrentSystemPrompt(context.messages as any).trim();
+        } catch {
+          // ignore error and fallback
+        }
+        if (!systemPrompt) {
+          for (const msg of context.messages) {
+            if (msg.role === "system") {
+              if (typeof msg.content === "string") {
+                systemPrompt = msg.content;
+              } else if (Array.isArray(msg.content)) {
+                systemPrompt = msg.content
+                  .map((c: any) => c.text || "")
+                  .filter(Boolean)
+                  .join("\n");
+              }
             }
           }
+        }
+        if (!systemPrompt) {
+          systemPrompt = DEFAULT_SYSTEM_PROMPT;
         }
 
         // Resolve what the Language Server cannot know on its own: history from turns

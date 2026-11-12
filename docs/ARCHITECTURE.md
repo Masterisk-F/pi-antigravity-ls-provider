@@ -139,21 +139,17 @@ The system prompt is passed through unchanged. The provider does not prepend any
 Pi maintains conversation trees allowing non-linear navigation (`/tree`, `/rewind`). Antigravity's LS stores conversations as flat trajectories (`Step[]`).
 
 ### Binding Structure
-The provider persists branch state in `~/.pi/agent/pi-antigravity-ls/bindings.json`:
+The provider persists branch state per session in isolated files under `~/.pi/agent/pi-antigravity-ls/sessions/<sessionId>.json`:
 
 ```jsonc
 {
-  "sessions": {
-    "<piSessionId>": {
-      "cascadeId": "c4d3...",
-      "lastLeafId": "<piMessageEntryId>",
-      "priorHistory": "[User]: ...\n\n[Assistant]: ...",
-      "steps": {
-        "<entryId_1>": 2,
-        "<entryId_2>": 4,
-        "<entryId_3>": 7
-      }
-    }
+  "cascadeId": "c4d3...",
+  "lastLeafId": "<piMessageEntryId>",
+  "priorHistory": "[User]: ...\n\n[Assistant]: ...",
+  "steps": {
+    "<entryId_1>": 2,
+    "<entryId_2>": 4,
+    "<entryId_3>": 7
   }
 }
 ```

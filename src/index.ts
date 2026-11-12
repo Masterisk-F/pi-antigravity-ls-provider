@@ -134,14 +134,14 @@ export default async function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
-    cascadeManager.clearAll();
+    cascadeManager.disposeAll();
     await mcpServer.stop();
     await lsConnection.stop();
   });
 
   // Handle process exit for one-shot mode (pi -p)
   process.on("beforeExit", () => {
-    cascadeManager.clearAll();
+    cascadeManager.disposeAll();
     mcpServer.stop().catch(() => {});
     lsConnection.stop().catch(() => {});
   });

@@ -1,5 +1,7 @@
 /**
  * Binding store for tracking the mapping between pi conversation branches and Antigravity Cascades.
+ * Persists each session in its own isolated JSON file (<baseDir>/<sessionId>.json) to prevent
+ * cross-session clobbering when running multiple sessions or concurrent pi instances.
  */
 
 import * as os from "node:os";
@@ -20,63 +22,83 @@ export interface SessionBinding {
   priorHistory?: string;
 }
 
-export interface BindingsFileSchema {
-  sessions: Record<string, SessionBinding>;
-}
-
 export class BindingStore {
-  private filePath: string;
-  private data: BindingsFileSchema = { sessions: {} };
+  private baseDir: string;
 
   constructor(customPath?: string) {
-    this.filePath =
-      customPath ||
-      path.join(os.homedir(), ".pi", "agent", "pi-antigravity-ls", "bindings.json");
-    this.load();
+    if (!customPath) {
+      this.baseDir = path.join(os.homedir(), ".pi", "agent", "pi-antigravity-ls", "sessions");
+    } else if (customPath.endsWith(".json")) {
+      this.baseDir = path.dirname(customPath);
+    } else {
+      this.baseDir = customPath;
+    }
   }
 
-  load(): void {
-    try {
-      if (fs.existsSync(this.filePath)) {
-        const raw = fs.readFileSync(this.filePath, "utf8");
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed.sessions === "object") {
-          this.data = parsed;
-          return;
-        }
-      }
-    } catch {
-      // Corrupt file, fail-safe to empty
-    }
-    this.data = { sessions: {} };
-  }
-
-  save(): void {
-    try {
-      const dir = path.dirname(this.filePath);
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), "utf8");
-    } catch (e: any) {
-      console.error(`[BindingStore] Failed to save bindings to ${this.filePath}:`, e.message);
-    }
+  getSessionFilePath(sessionId: string): string {
+    const safeId = sessionId.replace(/[^a-zA-Z0-9._-]/g, "_") || "default";
+    return path.join(this.baseDir, `${safeId}.json`);
   }
 
   get(sessionId: string): SessionBinding | undefined {
-    return this.data.sessions[sessionId];
+    const filePath = this.getSessionFilePath(sessionId);
+    try {
+      if (fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, "utf8");
+        const parsed = JSON.parse(raw);
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          typeof parsed.cascadeId === "string" &&
+          typeof parsed.steps === "object" &&
+          parsed.steps !== null
+        ) {
+          return parsed as SessionBinding;
+        }
+      }
+    } catch {
+      // Corrupt file for this session; fail-safe to undefined without affecting other sessions
+    }
+    return undefined;
   }
 
   set(sessionId: string, binding: SessionBinding): void {
-    this.data.sessions[sessionId] = binding;
-    this.save();
+    const filePath = this.getSessionFilePath(sessionId);
+    try {
+      fs.mkdirSync(this.baseDir, { recursive: true });
+      const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(binding, null, 2), "utf8");
+      fs.renameSync(tmpPath, filePath);
+    } catch (e: any) {
+      console.error(`[BindingStore] Failed to save binding to ${filePath}:`, e.message);
+    }
   }
 
   remove(sessionId: string): void {
-    delete this.data.sessions[sessionId];
-    this.save();
+    const filePath = this.getSessionFilePath(sessionId);
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (e: any) {
+      console.error(`[BindingStore] Failed to remove binding at ${filePath}:`, e.message);
+    }
   }
 
   clear(): void {
-    this.data = { sessions: {} };
-    this.save();
+    try {
+      if (!fs.existsSync(this.baseDir)) return;
+      for (const entry of fs.readdirSync(this.baseDir)) {
+        if (entry.endsWith(".json")) {
+          try {
+            fs.unlinkSync(path.join(this.baseDir, entry));
+          } catch {
+            // ignore
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error(`[BindingStore] Failed to clear bindings in ${this.baseDir}:`, e.message);
+    }
   }
 }
