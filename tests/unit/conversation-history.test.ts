@@ -155,6 +155,35 @@ describe("resolvePriorHistory (Unit)", () => {
 
     assert.strictEqual(result.isExternalSwitch, false);
   });
+
+  it("includes trailing toolResult messages after the last assistant message in prior history (D-05)", () => {
+    const messages = [
+      { role: "system", content: "prompt" },
+      { role: "user", content: "run query" },
+      {
+        role: "assistant",
+        provider: "anthropic",
+        content: [
+          { type: "toolCall", id: "call_sql", name: "query", arguments: { sql: "SELECT 1" } },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_sql",
+        toolName: "query",
+        content: [{ type: "text", text: "result: 1 row" }],
+      },
+      { role: "user", content: "explain result" },
+    ];
+
+    const result = resolvePriorHistory(messages);
+
+    assert.strictEqual(result.isExternalSwitch, true);
+    assert.ok(result.priorHistory.includes("[User]: run query"));
+    assert.ok(result.priorHistory.includes("[Assistant tool calls]: query(sql=\"SELECT 1\")"));
+    assert.ok(result.priorHistory.includes("[Tool result (query)]: result: 1 row"));
+    assert.strictEqual(result.priorHistory.includes("explain result"), false);
+  });
 });
 
 describe("resolveLeafKey (Unit)", () => {

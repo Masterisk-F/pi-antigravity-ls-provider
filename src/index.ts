@@ -112,6 +112,7 @@ export default async function (pi: ExtensionAPI) {
   // like plannotator_submit_plan, or user abort), explicitly cancel the Language Server
   // invocation to deterministically force it into `status: idle`. (D-03)
   pi.on("agent_settled", async (_event: any, ctx: ExtensionContext) => {
+    roundTrip.abortAll("Agent settled");
     const sessionId = ctx.sessionManager.getSessionId();
     await cascadeManager.cancelCascade(sessionId);
   });

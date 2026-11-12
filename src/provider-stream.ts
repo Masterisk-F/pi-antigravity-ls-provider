@@ -147,7 +147,14 @@ export function resolvePriorHistory(
 
   const lastAssistant = messages[lastAssistantIndex];
   const isExternalSwitch = typeof lastAssistant.provider === "string" && lastAssistant.provider !== PROVIDER_ID;
-  const priorHistory = formatConversationHistory(messages.slice(0, lastAssistantIndex + 1));
+  let historyEndIndex = lastAssistantIndex + 1;
+  while (
+    historyEndIndex < messages.length &&
+    messages[historyEndIndex].role === "toolResult"
+  ) {
+    historyEndIndex++;
+  }
+  const priorHistory = formatConversationHistory(messages.slice(0, historyEndIndex));
 
   return { priorHistory, isExternalSwitch };
 }
@@ -406,7 +413,7 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           });
         };
 
-        const onPark = (p: ParkEvent) => {
+        const onPark = async (p: ParkEvent) => {
           if (isDone) return;
           isDone = true;
           cleanupListeners();
@@ -462,6 +469,15 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
             toolCall: toolCallBlock,
             partial: message,
           });
+
+          // Record intermediate toolCall step index and upcoming toolResult step index in CascadeManager (D-01)
+          await cascadeManager.recordToolCallStep(
+            sessionId,
+            context.messages as any,
+            message as any,
+            p.callId,
+            cascade
+          );
 
           message.stopReason = "toolUse";
           stream.push({ type: "done", reason: "toolUse", message });
@@ -569,7 +585,10 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
             // stops recording anything after the first id-less turn.
             const currentLeaf = context.messages[context.messages.length - 1] as any;
             const leafKey = resolveLeafKey(currentLeaf, context.messages.length);
-            await cascadeManager.recordTurnEnd(sessionId, leafKey, cascade);
+            await cascadeManager.recordTurnEnd(sessionId, leafKey, cascade, {
+              branch: context.messages as any,
+              assistantMessage: message as any,
+            });
 
             message.stopReason = "stop";
             stream.push({ type: "done", reason: "stop", message });
