@@ -79,15 +79,72 @@ describe("ModelCatalog Resolution & Model Isolation", () => {
     });
   });
 
-  describe("Strict Model Separation (Gemini 3.8 Flash vs Gemini 4 Argon)", () => {
-    test("flash and argon must never share the same numericId or modelName prefix", () => {
-      for (const effort of ["low", "medium", "high"]) {
+  describe("Gemini 4 Hydrogen (Numeric IDs: 1525, 1526, 1527, 1528)", () => {
+    test("resolves effort: low / minimal to 1527 and gemini-4-hydrogen-low", () => {
+      const resLow = catalog.resolveModel("gemini-4-hydrogen", "low");
+      assert.equal(resLow.numericId, 1527);
+      assert.equal(resLow.modelName, "gemini-4-hydrogen-low");
+
+      const resMinimal = catalog.resolveModel("gemini-4-hydrogen", "minimal");
+      assert.equal(resMinimal.numericId, 1527);
+      assert.equal(resMinimal.modelName, "gemini-4-hydrogen-low");
+    });
+
+    test("resolves effort: medium to 1526 and gemini-4-hydrogen-medium", () => {
+      const res = catalog.resolveModel("gemini-4-hydrogen", "medium");
+      assert.equal(res.numericId, 1526);
+      assert.equal(res.modelName, "gemini-4-hydrogen-medium");
+    });
+
+    test("resolves effort: high to 1525 and gemini-4-hydrogen-high", () => {
+      const res = catalog.resolveModel("gemini-4-hydrogen", "high");
+      assert.equal(res.numericId, 1525);
+      assert.equal(res.modelName, "gemini-4-hydrogen-high");
+    });
+
+    test("resolves effort: unspecified to 1525 (default: high)", () => {
+      const res = catalog.resolveModel("gemini-4-hydrogen");
+      assert.equal(res.numericId, 1525);
+      assert.equal(res.modelName, "gemini-4-hydrogen-high");
+    });
+
+    test("resolves effort: xhigh / max to 1528 and gemini-4-hydrogen-xhigh", () => {
+      const resXhigh = catalog.resolveModel("gemini-4-hydrogen", "xhigh");
+      assert.equal(resXhigh.numericId, 1528);
+      assert.equal(resXhigh.modelName, "gemini-4-hydrogen-xhigh");
+
+      const resMax = catalog.resolveModel("gemini-4-hydrogen", "max");
+      assert.equal(resMax.numericId, 1528);
+      assert.equal(resMax.modelName, "gemini-4-hydrogen-xhigh");
+    });
+
+    test("resolves with provider prefix antigravity-ls/gemini-4-hydrogen", () => {
+      const res = catalog.resolveModel("antigravity-ls/gemini-4-hydrogen", "high");
+      assert.equal(res.numericId, 1525);
+      assert.equal(res.modelName, "gemini-4-hydrogen-high");
+    });
+
+    test("resolves legacy underscore alias gemini_4_hydrogen", () => {
+      const res = catalog.resolveModel("gemini_4_hydrogen", "xhigh");
+      assert.equal(res.numericId, 1528);
+      assert.equal(res.modelName, "gemini-4-hydrogen-xhigh");
+    });
+  });
+
+  describe("Strict Model Separation (Gemini 3.8 Flash vs Gemini 4 Argon vs Gemini 4 Hydrogen)", () => {
+    test("flash, argon, and hydrogen must never share the same numericId or modelName prefix", () => {
+      for (const effort of ["low", "medium", "high", "xhigh"]) {
         const flash = catalog.resolveModel("gemini-3.8-flash", effort);
         const argon = catalog.resolveModel("gemini-4-argon", effort);
+        const hydrogen = catalog.resolveModel("gemini-4-hydrogen", effort);
 
-        assert.notEqual(flash.numericId, argon.numericId, `numericId must differ for effort ${effort}`);
+        assert.notEqual(flash.numericId, argon.numericId, `flash and argon numericId must differ for effort ${effort}`);
+        assert.notEqual(flash.numericId, hydrogen.numericId, `flash and hydrogen numericId must differ for effort ${effort}`);
+        assert.notEqual(argon.numericId, hydrogen.numericId, `argon and hydrogen numericId must differ for effort ${effort}`);
+
         assert.ok(flash.modelName?.startsWith("gemini-3.8-flash-"));
         assert.ok(argon.modelName?.startsWith("gemini-4-argon-"));
+        assert.ok(hydrogen.modelName?.startsWith("gemini-4-hydrogen-"));
       }
     });
   });

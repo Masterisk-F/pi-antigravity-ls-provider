@@ -4,12 +4,13 @@
  * Exposes unified models with effort tiers mapped via thinkingLevelMap:
  * - gemini-3.8-flash (effort: low, medium, high)
  * - gemini-4-argon   (effort: low, medium, high)
+ * - gemini-4-hydrogen (effort: low, medium, high, xhigh)
  * - claude-sonnet-5-5 (effort: low, medium, high)
  * - claude-opus-5-5   (effort: low, medium, high)
  * - gpt-oss-120b      (single tier)
  */
 
-export type EffortTier = "low" | "medium" | "high";
+export type EffortTier = "low" | "medium" | "high" | "xhigh";
 
 export interface AntigravityModelDefinition {
   id: string;
@@ -42,6 +43,16 @@ const THREE_TIER_MAP = {
   max: "high",
 } as const;
 
+const FOUR_TIER_MAP = {
+  off: null,
+  minimal: "low",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "xhigh",
+  max: "xhigh",
+} as const;
+
 export const ANTIGRAVITY_LS_MODELS: AntigravityModelDefinition[] = [
   {
     id: "gemini-3.8-flash",
@@ -59,6 +70,7 @@ export const ANTIGRAVITY_LS_MODELS: AntigravityModelDefinition[] = [
         low: 1320,
         medium: 1319,
         high: 1318,
+        xhigh: 1318,
       };
       return {
         numericId: idMap[e],
@@ -82,10 +94,35 @@ export const ANTIGRAVITY_LS_MODELS: AntigravityModelDefinition[] = [
         low: 1419,
         medium: 1418,
         high: 1417,
+        xhigh: 1417,
       };
       return {
         numericId: idMap[e],
         modelName: `gemini-4-argon-${e}`,
+      };
+    },
+  },
+  {
+    id: "gemini-4-hydrogen",
+    name: "Gemini 4 Hydrogen",
+    type: "chat",
+    reasoning: true,
+    thinkingLevelMap: FOUR_TIER_MAP,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1000000,
+    maxTokens: 64000,
+    resolveTier: (effort) => {
+      const e = normalizeEffort(effort, "high", true);
+      const idMap: Record<EffortTier, number> = {
+        low: 1527,
+        medium: 1526,
+        high: 1525,
+        xhigh: 1528,
+      };
+      return {
+        numericId: idMap[e],
+        modelName: `gemini-4-hydrogen-${e}`,
       };
     },
   },
@@ -105,6 +142,7 @@ export const ANTIGRAVITY_LS_MODELS: AntigravityModelDefinition[] = [
         low: 1403,
         medium: 1404,
         high: 1405,
+        xhigh: 1405,
       };
       return {
         numericId: idMap[e],
@@ -128,6 +166,7 @@ export const ANTIGRAVITY_LS_MODELS: AntigravityModelDefinition[] = [
         low: 1400,
         medium: 1401,
         high: 1402,
+        xhigh: 1402,
       };
       return {
         numericId: idMap[e],
@@ -151,12 +190,18 @@ export const ANTIGRAVITY_LS_MODELS: AntigravityModelDefinition[] = [
   },
 ];
 
-function normalizeEffort(effort?: string): EffortTier {
-  if (!effort) return "medium";
+function normalizeEffort(
+  effort?: string,
+  defaultTier: EffortTier = "medium",
+  allowXhigh = false
+): EffortTier {
+  if (!effort) return defaultTier;
   const lower = effort.toLowerCase();
   if (lower === "low" || lower === "minimal") return "low";
-  if (lower === "high" || lower === "xhigh" || lower === "max") return "high";
-  return "medium";
+  if (lower === "medium") return "medium";
+  if (lower === "high") return "high";
+  if (lower === "xhigh" || lower === "max") return allowXhigh ? "xhigh" : "high";
+  return defaultTier;
 }
 
 export class ModelCatalog {
