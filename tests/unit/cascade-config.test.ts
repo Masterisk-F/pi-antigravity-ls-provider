@@ -108,4 +108,52 @@ describe("CascadeConfig Builder (Declarative Mixin)", () => {
     assert.equal(config.plannerConfig.requestedModel.choice.value, 1528);
     assert.equal(config.plannerConfig.modelName, "gemini-4-hydrogen-xhigh");
   });
+
+  test("replaces 'pi, a coding agent harness' with 'pi' in pi v1.4.0 default system prompt", () => {
+    const config = buildCascadeConfig({
+      modelId: 1419,
+      systemPrompt:
+        "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
+    });
+
+    const content =
+      config.plannerConfig.plannerTypeConfig.value.promptSections[0].item.value.content;
+
+    assert.equal(
+      content,
+      "You are an expert coding assistant operating inside pi. You help users by reading files, executing commands, editing code, and writing new files."
+    );
+  });
+
+  test("replaces 'pi, a coding agent harness' with 'pi' in pi v1.5.0 default system prompt", () => {
+    const config = buildCascadeConfig({
+      modelId: 1419,
+      systemPrompt:
+        "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.",
+    });
+
+    const content =
+      config.plannerConfig.plannerTypeConfig.value.promptSections[0].item.value.content;
+
+    assert.equal(
+      content,
+      "You are a coding assistant running inside pi. Help users inspect files, run commands, and modify code."
+    );
+  });
+
+  test("replaces all occurrences of 'pi, a coding agent harness' without altering unrelated text", () => {
+    const config = buildCascadeConfig({
+      modelId: 1419,
+      systemPrompt:
+        "Operating inside pi, a coding agent harness.\nSecond mention: pi, a coding agent harness and tools.",
+    });
+
+    const content =
+      config.plannerConfig.plannerTypeConfig.value.promptSections[0].item.value.content;
+
+    assert.equal(
+      content,
+      "Operating inside pi.\nSecond mention: pi and tools."
+    );
+  });
 });
