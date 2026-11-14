@@ -48,10 +48,10 @@ const PROVIDER_ID = "antigravity-ls";
 const TOOL_RESULT_MAX_CHARS = 4000;
 
 const DEFAULT_SYSTEM_PROMPT =
-  "You are an expert AI software engineer operating as a coding agent.";
+  "You are an expert coding assistant. You help users by reading files, executing commands, editing code, and writing new files.";
 
 export const NORMALIZED_PREAMBLE =
-  "You are an expert coding assistant. You help users by reading files, executing commands, editing code, and writing new files.";
+  "You are Antigravity, a powerful agentic AI coding assistant designed by Google DeepMind. You help users by reading files, executing commands, editing code, and writing new files.";
 
 let cachedDefaultPiPreambles: Promise<string[]> | undefined;
 
