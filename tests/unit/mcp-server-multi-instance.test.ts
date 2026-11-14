@@ -14,13 +14,16 @@ describe("McpBridgeServer Multi-Instance & Preservation (Unit)", () => {
   });
 
   it("safely adds unique entry and cleans up only its own entry on stop", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-test-"));
     const roundTrip = new RoundTrip();
-    const server = new McpBridgeServer({ toolsProvider: () => [], roundTrip });
+    const server = new McpBridgeServer({
+      toolsProvider: () => [],
+      roundTrip,
+      configDirs: [tmpDir],
+    });
     await server.start();
 
-    const cfgDir = path.join(os.homedir(), ".gemini", "config");
-    fs.mkdirSync(cfgDir, { recursive: true });
-    const cfgPath = path.join(cfgDir, "mcp_config.json");
+    const cfgPath = path.join(tmpDir, "mcp_config.json");
 
     // Existing user config (e.g. Playwright or other tools)
     const initialConfig = {
@@ -51,8 +54,8 @@ describe("McpBridgeServer Multi-Instance & Preservation (Unit)", () => {
       // 4. Existing tool must remain intact
       assert.ok(afterStop.mcpServers["existing-custom-tool"]);
     } finally {
-      // Restore initial config
-      fs.writeFileSync(cfgPath, JSON.stringify(initialConfig, null, 2), "utf8");
+      await server.stop();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 

@@ -639,6 +639,11 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         if (userTexts.length > 0) {
           const client = await lsConnection.ensureClient();
 
+          // Ensure MCP server is properly registered in config before dispatching prompts (D-01: Self-Healing)
+          if (mcpServer) {
+            await mcpServer.ensureRegistered(client);
+          }
+
           // pi may have changed its active tool set mid-session (plan mode, tool_search,
           // --tools modifiers). Re-publish the MCP tool catalog so the LS schema matches.
           if (mcpServer?.consumeToolSetChanged()) {

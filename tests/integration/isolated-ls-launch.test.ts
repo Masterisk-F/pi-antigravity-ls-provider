@@ -11,8 +11,19 @@ describe("Multi-Instance MCP Registration & Conflict-Free Coexistence (Integrati
     const roundTrip1 = new RoundTrip();
     const roundTrip2 = new RoundTrip();
 
-    const mcp1 = new McpBridgeServer({ toolsProvider: () => [], roundTrip: roundTrip1, instanceId: "inst1" });
-    const mcp2 = new McpBridgeServer({ toolsProvider: () => [], roundTrip: roundTrip2, instanceId: "inst2" });
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-iso-test-"));
+    const mcp1 = new McpBridgeServer({
+      toolsProvider: () => [],
+      roundTrip: roundTrip1,
+      instanceId: "inst1",
+      configDirs: [tmpDir],
+    });
+    const mcp2 = new McpBridgeServer({
+      toolsProvider: () => [],
+      roundTrip: roundTrip2,
+      instanceId: "inst2",
+      configDirs: [tmpDir],
+    });
 
     const port1 = await mcp1.start();
     const port2 = await mcp2.start();
@@ -20,8 +31,7 @@ describe("Multi-Instance MCP Registration & Conflict-Free Coexistence (Integrati
     // 1. Port collision check: OS must assign distinct ephemeral ports
     assert.notStrictEqual(port1, port2, "Ports must not collide");
 
-    const cfgDir = path.join(os.homedir(), ".gemini", "config");
-    const cfgPath = path.join(cfgDir, "mcp_config.json");
+    const cfgPath = path.join(tmpDir, "mcp_config.json");
 
     try {
       // Instance 1 registers
@@ -46,6 +56,7 @@ describe("Multi-Instance MCP Registration & Conflict-Free Coexistence (Integrati
     } finally {
       await mcp1.stop();
       await mcp2.stop();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 });
