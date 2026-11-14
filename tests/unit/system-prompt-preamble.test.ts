@@ -1,15 +1,18 @@
 import { describe, test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as path from "node:path";
+import { pathToFileURL } from "node:url";
+import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { extractSystemPrompt, NORMALIZED_PREAMBLE } from "../../src/provider-stream.js";
 
-const V140_DEFAULT_PREAMBLE =
-  "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
-
-const V150_DEFAULT_PREAMBLE =
-  "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.";
+async function loadPackageDefaultPreamble(): Promise<string> {
+  const modPath = path.join(getPackageDir(), "dist", "core", "system-prompt.js");
+  const mod = await import(pathToFileURL(modPath).href);
+  return mod.buildSystemPromptSections({ cwd: "." }).preamble;
+}
 
 describe("extractSystemPrompt (sections.preamble replacement)", () => {
-  test("replaces sections.preamble regardless of its original wording and preserves remaining sections", () => {
+  test("replaces sections.preamble regardless of its original wording and preserves remaining sections", async () => {
     const messages = [
       {
         role: "system",
@@ -23,7 +26,7 @@ describe("extractSystemPrompt (sections.preamble replacement)", () => {
       },
     ];
 
-    const result = extractSystemPrompt(messages);
+    const result = await extractSystemPrompt(messages);
 
     assert.equal(
       result,
@@ -31,7 +34,7 @@ describe("extractSystemPrompt (sections.preamble replacement)", () => {
     );
   });
 
-  test("preserves non-preamble sections and applies mid-conversation section patches without altering other text", () => {
+  test("preserves non-preamble sections and applies mid-conversation section patches without altering other text", async () => {
     const messages = [
       {
         role: "system",
@@ -55,7 +58,7 @@ describe("extractSystemPrompt (sections.preamble replacement)", () => {
       },
     ];
 
-    const result = extractSystemPrompt(messages);
+    const result = await extractSystemPrompt(messages);
 
     assert.equal(
       result,
@@ -63,7 +66,7 @@ describe("extractSystemPrompt (sections.preamble replacement)", () => {
     );
   });
 
-  test("does not mutate the original system message object", () => {
+  test("does not mutate the original system message object", async () => {
     const originalPreamble = "Original preamble text.";
     const originalSections = {
       preamble: originalPreamble,
@@ -78,12 +81,12 @@ describe("extractSystemPrompt (sections.preamble replacement)", () => {
       },
     ];
 
-    extractSystemPrompt(messages);
+    await extractSystemPrompt(messages);
 
     assert.equal(originalSections.preamble, originalPreamble);
   });
 
-  test("does not inject preamble when sections has no preamble key", () => {
+  test("does not inject preamble when sections has no preamble key", async () => {
     const messages = [
       {
         role: "system",
@@ -95,44 +98,29 @@ describe("extractSystemPrompt (sections.preamble replacement)", () => {
       },
     ];
 
-    const result = extractSystemPrompt(messages);
+    const result = await extractSystemPrompt(messages);
 
     assert.equal(result, "Base instruction\n\n<cwd>\n/tmp\n</cwd>");
   });
 
-  test("replaces pi v1.4.0 default preamble inside flat content-only system prompt (forceSystemPrompt)", () => {
+  test("replaces pi package default preamble inside flat content-only system prompt (forceSystemPrompt)", async () => {
+    const packageDefaultPreamble = await loadPackageDefaultPreamble();
     const prefix = "## Skill invocation protocol (CRITICAL)\n\nFollow skill blocks.\n\n";
     const suffix = "\n\n<tools>\n- read: Read file\n</tools>";
     const messages = [
       {
         role: "system",
-        content: `${prefix}${V140_DEFAULT_PREAMBLE}${suffix}`,
+        content: `${prefix}${packageDefaultPreamble}${suffix}`,
         timestamp: 1,
       },
     ];
 
-    const result = extractSystemPrompt(messages);
+    const result = await extractSystemPrompt(messages);
 
     assert.equal(result, `${prefix}${NORMALIZED_PREAMBLE}${suffix}`);
   });
 
-  test("replaces pi v1.5.0 default preamble inside flat content-only system prompt (forceSystemPrompt)", () => {
-    const prefix = "Custom workflow header\n\n";
-    const suffix = "\n\n<cwd>\n/tmp/repo\n</cwd>";
-    const messages = [
-      {
-        role: "system",
-        content: `${prefix}${V150_DEFAULT_PREAMBLE}${suffix}`,
-        timestamp: 1,
-      },
-    ];
-
-    const result = extractSystemPrompt(messages);
-
-    assert.equal(result, `${prefix}${NORMALIZED_PREAMBLE}${suffix}`);
-  });
-
-  test("keeps plain content-only system messages intact when no default preamble is present", () => {
+  test("keeps plain content-only system messages intact when no default preamble is present", async () => {
     const plainPrompt = "Forced or plain system prompt.";
     const messages = [
       {
@@ -142,13 +130,13 @@ describe("extractSystemPrompt (sections.preamble replacement)", () => {
       },
     ];
 
-    const result = extractSystemPrompt(messages);
+    const result = await extractSystemPrompt(messages);
 
     assert.equal(result, plainPrompt);
   });
 
-  test("falls back to default prompt when no system messages exist", () => {
-    const result = extractSystemPrompt([{ role: "user", content: "hello", timestamp: 1 }]);
+  test("falls back to default prompt when no system messages exist", async () => {
+    const result = await extractSystemPrompt([{ role: "user", content: "hello", timestamp: 1 }]);
     assert.equal(result, "You are an expert AI software engineer operating as a coding agent.");
   });
 });

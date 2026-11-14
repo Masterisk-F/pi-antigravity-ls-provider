@@ -4,6 +4,10 @@
  * Connects pi's streaming tool loop with Antigravity's Cascade agent loop.
  */
 
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { pathToFileURL } from "node:url";
+import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import {
   contentText,
   getCurrentSystemMessage,
@@ -46,23 +50,67 @@ const TOOL_RESULT_MAX_CHARS = 4000;
 const DEFAULT_SYSTEM_PROMPT =
   "You are an expert AI software engineer operating as a coding agent.";
 
-const PI_DEFAULT_PREAMBLES = [
-  // pi v1.4.0 default preamble
-  "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
-  // pi v1.5.0 default preamble
-  "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.",
-] as const;
-
 export const NORMALIZED_PREAMBLE =
   "You are an expert coding assistant. You help users by reading files, executing commands, editing code, and writing new files.";
 
-function replaceDefaultPreambleInContent(content: string): string {
-  for (const defaultPreamble of PI_DEFAULT_PREAMBLES) {
-    if (content.includes(defaultPreamble)) {
-      return content.replace(defaultPreamble, NORMALIZED_PREAMBLE);
+let cachedDefaultPiPreambles: Promise<string[]> | undefined;
+
+function collectPiPackageDirs(): string[] {
+  const dirs = new Set<string>();
+  try {
+    dirs.add(fs.realpathSync(getPackageDir()));
+  } catch {
+    dirs.add(getPackageDir());
+  }
+
+  // When loaded as an ESM package inside a host `pi` process whose version differs
+  // from local `node_modules/@earendil-works/pi-coding-agent`, Node's native ESM
+  // resolution follows local `node_modules` instead of jiti's host alias. Walk up
+  // from `process.argv[1]` as well so the running host pi package is included.
+  const entry = process.argv[1];
+  if (entry) {
+    try {
+      let dir = path.dirname(fs.realpathSync(entry));
+      while (dir !== path.dirname(dir)) {
+        if (fs.existsSync(path.join(dir, "dist", "core", "system-prompt.js"))) {
+          dirs.add(dir);
+          break;
+        }
+        dir = path.dirname(dir);
+      }
+    } catch {
+      // ignore invalid or virtual entry paths
     }
   }
-  return content;
+
+  return [...dirs];
+}
+
+/**
+ * Loads pi's built-in default preamble strings directly from the imported
+ * `@earendil-works/pi-coding-agent` package (and the active host `pi` package
+ * when different) so we never hardcode version-specific prompt strings.
+ */
+function resolveDefaultPiPreambles(): Promise<string[]> {
+  if (!cachedDefaultPiPreambles) {
+    cachedDefaultPiPreambles = (async () => {
+      const preambles = new Set<string>();
+      for (const pkgDir of collectPiPackageDirs()) {
+        try {
+          const modPath = path.join(pkgDir, "dist", "core", "system-prompt.js");
+          const mod = await import(pathToFileURL(modPath).href);
+          const preamble = mod?.buildSystemPromptSections?.({ cwd: "." })?.preamble;
+          if (typeof preamble === "string" && preamble.length > 0) {
+            preambles.add(preamble);
+          }
+        } catch {
+          // ignore unreadable or incompatible package layouts
+        }
+      }
+      return [...preambles];
+    })();
+  }
+  return cachedDefaultPiPreambles;
 }
 
 /**
@@ -72,12 +120,12 @@ function replaceDefaultPreambleInContent(content: string): string {
  * directly with {@link NORMALIZED_PREAMBLE} while keeping all other sections intact.
  * When `sections` is absent (for example, Pi's `forceSystemPrompt` projection when
  * extensions return `{ systemPrompt }` from `before_agent_start`), locates pi's
- * default preamble inside the flattened `content` and replaces it with
- * {@link NORMALIZED_PREAMBLE}.
+ * package-defined default preamble inside the flattened `content` and replaces it
+ * with {@link NORMALIZED_PREAMBLE}.
  */
-export function extractSystemPrompt(
+export async function extractSystemPrompt(
   messages: readonly { role: string; content?: any; sections?: Record<string, string | null | undefined>; [key: string]: any }[]
-): string {
+): Promise<string> {
   let systemPrompt = "";
   try {
     const systemMsg = getCurrentSystemMessage(messages as any);
@@ -113,7 +161,16 @@ export function extractSystemPrompt(
     }
   }
 
-  return systemPrompt ? replaceDefaultPreambleInContent(systemPrompt) : DEFAULT_SYSTEM_PROMPT;
+  if (!systemPrompt) {
+    return DEFAULT_SYSTEM_PROMPT;
+  }
+
+  for (const defaultPreamble of await resolveDefaultPiPreambles()) {
+    if (systemPrompt.includes(defaultPreamble)) {
+      return systemPrompt.replace(defaultPreamble, NORMALIZED_PREAMBLE);
+    }
+  }
+  return systemPrompt;
 }
 
 /**
@@ -326,7 +383,7 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         );
 
         // Extract system prompt with support for structured sections and mid-conversation patches (D-04)
-        const systemPrompt = extractSystemPrompt(context.messages as any);
+        const systemPrompt = await extractSystemPrompt(context.messages as any);
 
         // Resolve what the Language Server cannot know on its own: history from turns
         // that happened before this Cascade existed (e.g. on another provider).

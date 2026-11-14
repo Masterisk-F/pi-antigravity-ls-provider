@@ -1,6 +1,9 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert";
 import * as fs from "node:fs";
+import * as path from "node:path";
+import { pathToFileURL } from "node:url";
+import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { LsConnection } from "../../src/ls-connection.js";
 import { McpBridgeServer } from "../../src/tool-bridge/mcp-server.js";
 import { RoundTrip } from "../../src/tool-bridge/round-trip.js";
@@ -11,8 +14,11 @@ import { createStreamSimple, NORMALIZED_PREAMBLE } from "../../src/provider-stre
 
 const HAS_LS_BINARY = fs.existsSync("/opt/Antigravity/resources/bin/language_server");
 
-const V140_DEFAULT_PREAMBLE =
-  "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
+async function loadPackageDefaultPreamble(): Promise<string> {
+  const modPath = path.join(getPackageDir(), "dist", "core", "system-prompt.js");
+  const mod = await import(pathToFileURL(modPath).href);
+  return mod.buildSystemPromptSections({ cwd: "." }).preamble;
+}
 
 describe(
   "System prompt sections.preamble replacement with live Antigravity LS (E2E)",
@@ -164,6 +170,7 @@ describe(
         // 3. Flat content-only system message with prepended protocol (forceSystemPrompt projection)
         // must locate pi's default preamble string inside content and replace it
         currentTestSession = "e2e-forced-flat-system";
+        const packageDefaultPreamble = await loadPackageDefaultPreamble();
         const forcedPrefix = "## Skill invocation protocol (CRITICAL)\n\nFollow skill blocks.\n\n";
         const forcedSuffix = "\n\n<rules>\n- Be concise\n</rules>";
         const s3 = streamSimple(
@@ -172,7 +179,7 @@ describe(
             messages: [
               {
                 role: "system",
-                content: `${forcedPrefix}${V140_DEFAULT_PREAMBLE}${forcedSuffix}`,
+                content: `${forcedPrefix}${packageDefaultPreamble}${forcedSuffix}`,
                 timestamp: 20,
               },
               {
