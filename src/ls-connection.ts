@@ -6,6 +6,7 @@
  * without interference or port collisions.
  */
 
+import { EventEmitter } from "node:events";
 import { AntigravityClient, type ServerInfo } from "antigravity-client";
 import { spawn, type ChildProcess } from "node:child_process";
 import * as crypto from "node:crypto";
@@ -17,6 +18,7 @@ export interface LsConnectionOptions {
   workspacePath?: string;
   mcpServer?: McpBridgeServer;
   verbose?: boolean;
+  binaryPath?: string;
 }
 
 export const ANTIGRAVITY_IDE_VERSION = "2.28.1";
@@ -42,18 +44,34 @@ export function isLegacyServer(server: ServerInfo): boolean {
   return false;
 }
 
-export class LsConnection {
+export class LsConnection extends EventEmitter {
   private client: AntigravityClient | null = null;
   private lsProcess: ChildProcess | null = null;
   private connectingPromise: Promise<AntigravityClient> | null = null;
   private workspacePath: string;
   private mcpServer: McpBridgeServer | null = null;
   private verbose: boolean;
+  private binaryPath?: string;
+  private _generation = 0;
 
   constructor(options: LsConnectionOptions = {}) {
+    super();
     this.workspacePath = options.workspacePath || process.cwd();
     this.mcpServer = options.mcpServer || null;
     this.verbose = options.verbose ?? false;
+    this.binaryPath = options.binaryPath;
+  }
+
+  get generation(): number {
+    return this._generation;
+  }
+
+  isAlive(): boolean {
+    if (!this.client) return false;
+    if (this.lsProcess) {
+      return !this.lsProcess.killed && this.lsProcess.exitCode === null;
+    }
+    return true;
   }
 
   setWorkspacePath(wsPath: string) {
@@ -70,6 +88,11 @@ export class LsConnection {
         await this.client.getUserStatus();
         return this.client;
       } catch {
+        try {
+          this.client.dispose();
+        } catch {
+          // ignore
+        }
         this.client = null;
       }
     }
@@ -88,30 +111,33 @@ export class LsConnection {
   private async connectOrLaunch(): Promise<AntigravityClient> {
     let client: AntigravityClient | null = null;
 
-    // 1. Check for any running Antigravity LS (filtering out legacy/incompatible instances)
-    try {
-      const servers = await AntigravityClient.listServers();
-      for (const target of servers) {
-        if (isLegacyServer(target)) {
-          if (this.verbose) {
-            console.error(`[LsConnection] Skipping legacy LS PID ${target.pid}`);
+    // 1. Check for any running Antigravity LS only if explicitly allowed (D-01)
+    const allowReuse = process.env.PI_AGLS_REUSE_LS === "1";
+    if (allowReuse) {
+      try {
+        const servers = await AntigravityClient.listServers();
+        for (const target of servers) {
+          if (isLegacyServer(target)) {
+            if (this.verbose) {
+              console.error(`[LsConnection] Skipping legacy LS PID ${target.pid}`);
+            }
+            continue;
           }
-          continue;
-        }
-        try {
-          const candidate = await AntigravityClient.connectWithServer(target);
-          await candidate.getUserStatus();
-          client = candidate;
-          if (this.verbose) {
-            console.error(`[LsConnection] Reusing running LS PID ${target.pid}`);
+          try {
+            const candidate = await AntigravityClient.connectWithServer(target);
+            await candidate.getUserStatus();
+            client = candidate;
+            if (this.verbose) {
+              console.error(`[LsConnection] Reusing running LS PID ${target.pid}`);
+            }
+            break;
+          } catch {
+            // candidate failed, try next
           }
-          break;
-        } catch {
-          // candidate failed, try next
         }
+      } catch {
+        client = null;
       }
-    } catch {
-      client = null;
     }
 
     // 2. Launch LS if no running instance available
@@ -120,9 +146,10 @@ export class LsConnection {
         console.error(`[LsConnection] Spawning authentic Antigravity LS for ${this.workspacePath}`);
       }
 
-      const binary = fs.existsSync(DEFAULT_LS_BINARY)
-        ? DEFAULT_LS_BINARY
-        : (process.env.CODEIUM_LANGUAGE_SERVER_BIN || "language_server");
+      const binary =
+        this.binaryPath ||
+        process.env.CODEIUM_LANGUAGE_SERVER_BIN ||
+        (fs.existsSync(DEFAULT_LS_BINARY) ? DEFAULT_LS_BINARY : "language_server");
 
       const csrfToken = crypto.randomUUID();
 
@@ -159,14 +186,28 @@ export class LsConnection {
         if (this.verbose) {
           console.error(`[LsConnection] LS exited (code=${code}, signal=${signal})`);
         }
-        this.client = null;
-        this.lsProcess = null;
+        if (this.lsProcess === proc) {
+          if (this.client) {
+            try {
+              this.client.dispose();
+            } catch {
+              // ignore
+            }
+            this.client = null;
+          }
+          this.lsProcess = null;
+          this.emit("exit", { code, signal });
+          this.emit("disconnect");
+        }
       });
 
       // Wait for the HTTPS port line
       const httpsPort = await new Promise<number>((resolve, reject) => {
         const timer = setTimeout(() => {
-          reject(new Error("Timeout waiting for Antigravity LS HTTPS port"));
+          if (!resolved) {
+            resolved = true;
+            reject(new Error("Timeout waiting for Antigravity LS HTTPS port"));
+          }
         }, 30000);
 
         let resolved = false;
@@ -183,8 +224,21 @@ export class LsConnection {
 
         proc.on("error", (err) => {
           if (!resolved) {
+            resolved = true;
             clearTimeout(timer);
             reject(err);
+          }
+        });
+
+        proc.once("exit", (code, signal) => {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timer);
+            reject(
+              new Error(
+                `Antigravity LS exited before reporting HTTPS port (code=${code}, signal=${signal})`
+              )
+            );
           }
         });
       });
@@ -219,6 +273,7 @@ export class LsConnection {
     }
 
     this.client = client;
+    this._generation++;
     return client;
   }
 
