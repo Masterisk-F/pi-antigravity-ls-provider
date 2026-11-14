@@ -97,4 +97,15 @@ describe("CascadeConfig Builder (Declarative Mixin)", () => {
       assert.equal(sections[0].item.value.title, "pi_system");
     }
   });
+
+  test("configures modelId and modelName for Gemini 4 Hydrogen (xhigh)", () => {
+    const config = buildCascadeConfig({
+      modelId: 1528,
+      modelName: "gemini-4-hydrogen-xhigh",
+      systemPrompt: "System instruction",
+    });
+
+    assert.equal(config.plannerConfig.requestedModel.choice.value, 1528);
+    assert.equal(config.plannerConfig.modelName, "gemini-4-hydrogen-xhigh");
+  });
 });
