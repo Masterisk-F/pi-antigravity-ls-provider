@@ -2,6 +2,12 @@ import { describe, test } from "node:test";
 import * as assert from "node:assert/strict";
 import { extractSystemPrompt, NORMALIZED_PREAMBLE } from "../../src/provider-stream.js";
 
+const V140_DEFAULT_PREAMBLE =
+  "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
+
+const V150_DEFAULT_PREAMBLE =
+  "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.";
+
 describe("extractSystemPrompt (sections.preamble replacement)", () => {
   test("replaces sections.preamble regardless of its original wording and preserves remaining sections", () => {
     const messages = [
@@ -94,7 +100,39 @@ describe("extractSystemPrompt (sections.preamble replacement)", () => {
     assert.equal(result, "Base instruction\n\n<cwd>\n/tmp\n</cwd>");
   });
 
-  test("keeps plain content-only system messages intact", () => {
+  test("replaces pi v1.4.0 default preamble inside flat content-only system prompt (forceSystemPrompt)", () => {
+    const prefix = "## Skill invocation protocol (CRITICAL)\n\nFollow skill blocks.\n\n";
+    const suffix = "\n\n<tools>\n- read: Read file\n</tools>";
+    const messages = [
+      {
+        role: "system",
+        content: `${prefix}${V140_DEFAULT_PREAMBLE}${suffix}`,
+        timestamp: 1,
+      },
+    ];
+
+    const result = extractSystemPrompt(messages);
+
+    assert.equal(result, `${prefix}${NORMALIZED_PREAMBLE}${suffix}`);
+  });
+
+  test("replaces pi v1.5.0 default preamble inside flat content-only system prompt (forceSystemPrompt)", () => {
+    const prefix = "Custom workflow header\n\n";
+    const suffix = "\n\n<cwd>\n/tmp/repo\n</cwd>";
+    const messages = [
+      {
+        role: "system",
+        content: `${prefix}${V150_DEFAULT_PREAMBLE}${suffix}`,
+        timestamp: 1,
+      },
+    ];
+
+    const result = extractSystemPrompt(messages);
+
+    assert.equal(result, `${prefix}${NORMALIZED_PREAMBLE}${suffix}`);
+  });
+
+  test("keeps plain content-only system messages intact when no default preamble is present", () => {
     const plainPrompt = "Forced or plain system prompt.";
     const messages = [
       {

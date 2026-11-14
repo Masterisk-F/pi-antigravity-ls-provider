@@ -11,6 +11,9 @@ import { createStreamSimple, NORMALIZED_PREAMBLE } from "../../src/provider-stre
 
 const HAS_LS_BINARY = fs.existsSync("/opt/Antigravity/resources/bin/language_server");
 
+const V140_DEFAULT_PREAMBLE =
+  "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
+
 describe(
   "System prompt sections.preamble replacement with live Antigravity LS (E2E)",
   { skip: !HAS_LS_BINARY, timeout: 120000 },
@@ -157,6 +160,45 @@ describe(
         const sent2 = sentConfigs.find((c) => c.sessionId === "e2e-plain-system");
         assert.ok(sent2, "cascadeConfig must be captured for plain system turn");
         assert.strictEqual(sent2!.piSystemContent, plainSystem);
+
+        // 3. Flat content-only system message with prepended protocol (forceSystemPrompt projection)
+        // must locate pi's default preamble string inside content and replace it
+        currentTestSession = "e2e-forced-flat-system";
+        const forcedPrefix = "## Skill invocation protocol (CRITICAL)\n\nFollow skill blocks.\n\n";
+        const forcedSuffix = "\n\n<rules>\n- Be concise\n</rules>";
+        const s3 = streamSimple(
+          model,
+          {
+            messages: [
+              {
+                role: "system",
+                content: `${forcedPrefix}${V140_DEFAULT_PREAMBLE}${forcedSuffix}`,
+                timestamp: 20,
+              },
+              {
+                role: "user",
+                content: "Reply with just: FORCED_OK",
+                timestamp: 21,
+              },
+            ],
+          } as any,
+          { sessionId: currentTestSession }
+        );
+        let text3 = "";
+        for await (const ev of s3) {
+          if (ev.type === "text_delta") text3 += ev.delta;
+        }
+        const r3 = await s3.result();
+        assert.strictEqual(r3.stopReason, "stop");
+        assert.ok(text3.trim().length > 0, "live LS must return non-empty text for forced flat prompt");
+
+        const sent3 = sentConfigs.find((c) => c.sessionId === "e2e-forced-flat-system");
+        assert.ok(sent3, "cascadeConfig must be captured for forced flat prompt turn");
+        assert.strictEqual(
+          sent3!.piSystemContent,
+          `${forcedPrefix}${NORMALIZED_PREAMBLE}${forcedSuffix}`,
+          "default preamble inside flat content must be replaced while preserving prepended text and trailing sections"
+        );
       } finally {
         cascadeManager.disposeAll();
         await mcpServer.stop();
