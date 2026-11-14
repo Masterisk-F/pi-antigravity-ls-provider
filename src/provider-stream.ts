@@ -6,7 +6,8 @@
 
 import {
   contentText,
-  getCurrentSystemPrompt,
+  getCurrentSystemMessage,
+  getSystemMessageText,
   createAssistantMessageEventStream,
   type AssistantMessage,
   type AssistantMessageEventStream,
@@ -41,6 +42,70 @@ const PROVIDER_ID = "antigravity-ls";
 
 /** Per-tool-result character budget, mirroring pi's own summarization limits. */
 const TOOL_RESULT_MAX_CHARS = 4000;
+
+const DEFAULT_SYSTEM_PROMPT =
+  "You are an expert AI software engineer operating as a coding agent.";
+
+const PI_DEFAULT_PREAMBLES = new Set([
+  // pi v1.4.0 default preamble
+  "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
+  // pi v1.5.0 default preamble
+  "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.",
+]);
+
+export const NORMALIZED_PREAMBLE =
+  "You are an expert coding assistant. You help users by reading files, executing commands, editing code, and writing new files.";
+
+/**
+ * Resolves the effective system prompt from transcript messages.
+ *
+ * When pi's structured `sections.preamble` matches one of pi's built-in default
+ * preambles, only `sections.preamble` is replaced with {@link NORMALIZED_PREAMBLE}
+ * so custom preambles and all other sections (e.g. tools, rules, project_context)
+ * remain untouched.
+ */
+export function extractSystemPrompt(
+  messages: readonly { role: string; content?: any; sections?: Record<string, string | null | undefined>; [key: string]: any }[]
+): string {
+  let systemPrompt = "";
+  try {
+    const systemMsg = getCurrentSystemMessage(messages as any);
+    if (systemMsg) {
+      const preamble = systemMsg.sections?.preamble;
+      if (typeof preamble === "string" && PI_DEFAULT_PREAMBLES.has(preamble)) {
+        const patchedMsg = {
+          ...systemMsg,
+          sections: {
+            ...systemMsg.sections,
+            preamble: NORMALIZED_PREAMBLE,
+          },
+        };
+        systemPrompt = getSystemMessageText(patchedMsg).trim();
+      } else {
+        systemPrompt = getSystemMessageText(systemMsg).trim();
+      }
+    }
+  } catch {
+    // ignore error and fallback
+  }
+
+  if (!systemPrompt) {
+    for (const msg of messages) {
+      if (msg.role === "system") {
+        if (typeof msg.content === "string") {
+          systemPrompt = msg.content;
+        } else if (Array.isArray(msg.content)) {
+          systemPrompt = msg.content
+            .map((c: any) => c.text || "")
+            .filter(Boolean)
+            .join("\n");
+        }
+      }
+    }
+  }
+
+  return systemPrompt || DEFAULT_SYSTEM_PROMPT;
+}
 
 /**
  * Serializes past messages into a compact transcript for the Language Server.
@@ -252,30 +317,7 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         );
 
         // Extract system prompt with support for structured sections and mid-conversation patches (D-04)
-        const DEFAULT_SYSTEM_PROMPT = "You are an expert AI software engineer operating as a coding agent.";
-        let systemPrompt = "";
-        try {
-          systemPrompt = getCurrentSystemPrompt(context.messages as any).trim();
-        } catch {
-          // ignore error and fallback
-        }
-        if (!systemPrompt) {
-          for (const msg of context.messages) {
-            if (msg.role === "system") {
-              if (typeof msg.content === "string") {
-                systemPrompt = msg.content;
-              } else if (Array.isArray(msg.content)) {
-                systemPrompt = msg.content
-                  .map((c: any) => c.text || "")
-                  .filter(Boolean)
-                  .join("\n");
-              }
-            }
-          }
-        }
-        if (!systemPrompt) {
-          systemPrompt = DEFAULT_SYSTEM_PROMPT;
-        }
+        const systemPrompt = extractSystemPrompt(context.messages as any);
 
         // Resolve what the Language Server cannot know on its own: history from turns
         // that happened before this Cascade existed (e.g. on another provider).

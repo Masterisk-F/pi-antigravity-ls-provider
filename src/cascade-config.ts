@@ -4,7 +4,7 @@
  * Uses Antigravity's declarativeMixinConfig to:
  * - Completely exclude all Antigravity built-in tools (read_file, write_file, edit_file, run_command) from the tool schema
  * - Expose ONLY pi-tools (active pi tools) as native tool schemas
- * - Pass pi's own system prompt through (normalizing "pi, a coding agent harness" to "pi", no extra directives)
+ * - Pass pi's own system prompt through unchanged (no extra directives)
  */
 
 export interface CascadeConfigOptions {
@@ -24,19 +24,11 @@ export interface CascadeConfigOptions {
 const FALLBACK_SYSTEM_PROMPT =
   "You are an expert AI software engineer operating as a coding agent.";
 
-/**
- * Strips the ", a coding agent harness" appositive from pi's default system
- * prompt so Antigravity LS receives "pi" cleanly without harness-identifying phrasing.
- */
-export function normalizeSystemPrompt(systemPrompt: string): string {
-  return systemPrompt.replaceAll("pi, a coding agent harness", "pi");
-}
-
 export function buildCascadeConfig(options: CascadeConfigOptions) {
   const { modelId, modelName, systemPrompt, mcpServerName, conversationHistory } = options;
   const targetProviderName = mcpServerName || "pi-tools";
 
-  const promptContent = normalizeSystemPrompt(systemPrompt) || FALLBACK_SYSTEM_PROMPT;
+  const promptContent = systemPrompt || FALLBACK_SYSTEM_PROMPT;
 
   const promptSections: Array<{
     item: {
