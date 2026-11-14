@@ -19,9 +19,11 @@ export interface LsConnectionOptions {
   mcpServer?: McpBridgeServer;
   verbose?: boolean;
   binaryPath?: string;
+  healthCheckTimeoutMs?: number;
 }
 
 export const ANTIGRAVITY_IDE_VERSION = "2.28.1";
+export const LS_HEALTH_CHECK_TIMEOUT_MS = 5000;
 const DEFAULT_LS_BINARY = "/opt/Antigravity/resources/bin/language_server";
 
 /**
@@ -52,6 +54,7 @@ export class LsConnection extends EventEmitter {
   private mcpServer: McpBridgeServer | null = null;
   private verbose: boolean;
   private binaryPath?: string;
+  private healthCheckTimeoutMs: number;
   private _generation = 0;
 
   constructor(options: LsConnectionOptions = {}) {
@@ -60,6 +63,7 @@ export class LsConnection extends EventEmitter {
     this.mcpServer = options.mcpServer || null;
     this.verbose = options.verbose ?? false;
     this.binaryPath = options.binaryPath;
+    this.healthCheckTimeoutMs = options.healthCheckTimeoutMs ?? LS_HEALTH_CHECK_TIMEOUT_MS;
   }
 
   get generation(): number {
@@ -82,18 +86,46 @@ export class LsConnection extends EventEmitter {
     this.mcpServer = mcpServer;
   }
 
-  async ensureClient(): Promise<AntigravityClient> {
+  private async probe(client: AntigravityClient): Promise<void> {
+    await client.lsClient.getUserStatus({}, { timeoutMs: this.healthCheckTimeoutMs });
+  }
+
+  private discardClient(): void {
     if (this.client) {
       try {
-        await this.client.getUserStatus();
-        return this.client;
+        this.client.dispose();
       } catch {
+        // ignore
+      }
+      this.client = null;
+    }
+
+    if (this.lsProcess) {
+      const proc = this.lsProcess;
+      // Detach first so the async exit handler does not clear a newer process or emit stale events.
+      this.lsProcess = null;
+      if (!proc.killed && proc.exitCode === null) {
         try {
-          this.client.dispose();
+          proc.kill("SIGKILL");
         } catch {
           // ignore
         }
-        this.client = null;
+      }
+    }
+  }
+
+  async ensureClient(): Promise<AntigravityClient> {
+    const cached = this.client;
+    if (cached) {
+      try {
+        await this.probe(cached);
+        return cached;
+      } catch {
+        if (this.client === cached) {
+          this.discardClient();
+        } else if (this.client) {
+          return this.client;
+        }
       }
     }
 
@@ -123,15 +155,21 @@ export class LsConnection extends EventEmitter {
             }
             continue;
           }
+          let candidate: AntigravityClient | null = null;
           try {
-            const candidate = await AntigravityClient.connectWithServer(target);
-            await candidate.getUserStatus();
+            candidate = await AntigravityClient.connectWithServer(target);
+            await this.probe(candidate);
             client = candidate;
             if (this.verbose) {
               console.error(`[LsConnection] Reusing running LS PID ${target.pid}`);
             }
             break;
           } catch {
+            try {
+              candidate?.dispose();
+            } catch {
+              // ignore
+            }
             // candidate failed, try next
           }
         }
