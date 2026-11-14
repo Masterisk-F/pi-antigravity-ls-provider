@@ -51,7 +51,7 @@ const DEFAULT_SYSTEM_PROMPT =
   "You are an expert coding assistant. You help users by reading files, executing commands, editing code, and writing new files.";
 
 export const NORMALIZED_PREAMBLE =
-  "You are Antigravity, a powerful agentic AI coding assistant designed by Google DeepMind. You help users by reading files, executing commands, editing code, and writing new files.";
+  "You are Antigravity, a powerful agentic AI coding assistant designed by Google DeepMind. Your harness is pi coding agent. You help users by reading files, executing commands, editing code, and writing new files.";
 
 let cachedDefaultPiPreambles: Promise<string[]> | undefined;
 
