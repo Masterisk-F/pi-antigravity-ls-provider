@@ -5,9 +5,15 @@
  */
 
 import type { Cascade } from "antigravity-client";
-import type { LsConnection } from "./ls-connection.js";
+import { type LsConnection, ANTIGRAVITY_IDE_VERSION } from "./ls-connection.js";
 import { BindingStore, type SessionBinding } from "./bindings.js";
 import { buildCascadeConfig } from "./cascade-config.js";
+import { resolvePriorHistory } from "./provider-stream.js";
+
+interface ActiveCascadeEntry {
+  cascade: Cascade;
+  generation: number;
+}
 
 export interface TurnContext {
   sessionId: string;
@@ -33,6 +39,8 @@ export interface TurnCascade {
   cascade: Cascade;
   /** History transcript the Language Server must receive for this turn ("" when none). */
   priorHistory: string;
+  /** True when a brand new Cascade was created for this turn (requires sending a prompt/config). */
+  isFreshCascade?: boolean;
 }
 
 export interface RecordTurnEndOptions {
@@ -148,7 +156,7 @@ function isPendingStep(step: any): boolean {
 }
 
 export class CascadeManager {
-  private activeCascades = new Map<string, Cascade>();
+  private activeCascades = new Map<string, ActiveCascadeEntry>();
 
   constructor(
     private lsConnection: LsConnection,
@@ -164,7 +172,20 @@ export class CascadeManager {
   async ensureTurnCascade(ctx: TurnContext): Promise<TurnCascade> {
     const { sessionId, branch, modelId, modelName, systemPrompt } = ctx;
     const client = await this.lsConnection.ensureClient();
+    const currentGen = this.lsConnection.generation;
     let binding = this.bindingStore.get(sessionId);
+
+    // 0a. Check if cached cascade belongs to an older LS generation (D-02)
+    const cached = this.activeCascades.get(sessionId);
+    const generationChanged = Boolean(cached && cached.generation !== currentGen);
+    if (generationChanged) {
+      if (this.verbose) {
+        console.error(
+          `[CascadeManager] LS generation mismatch for session ${sessionId} (${cached!.generation} !== ${currentGen}); purging stale cascade.`
+        );
+      }
+      this.disposeCascade(sessionId);
+    }
 
     const leafEntry = branch.length > 0 ? branch[branch.length - 1] : undefined;
     // pi runtime messages do not always carry an `id`; fall back to a positional key so
@@ -173,7 +194,7 @@ export class CascadeManager {
       ? (leafEntry.id ?? `${leafEntry.role ?? "unknown"}:${leafEntry.timestamp ?? 0}:${branch.length}`)
       : "";
 
-    // 0. An external provider switch invalidates the existing trajectory: the turns that
+    // 0b. An external provider switch invalidates the existing trajectory: the turns that
     // happened on the other provider never reached this Cascade, so its memory is
     // unrecoverably incomplete. Drop it and replay the full branch into a new Cascade.
     if (ctx.isExternalSwitch) {
@@ -188,18 +209,23 @@ export class CascadeManager {
     }
 
     // 1. Prefer existing in-memory Cascade instance for this session (avoid repeat id subscriptions)
-    let cascade: Cascade | null = this.activeCascades.get(sessionId) || null;
+    let cascade: Cascade | null = this.activeCascades.get(sessionId)?.cascade || null;
 
-    // 2. If not in memory (e.g. fresh pi restart), resume from stored binding
-    if (!cascade && binding?.cascadeId) {
+    // 2. If not in memory (e.g. fresh pi restart), resume from stored binding.
+    // If LS restarted mid-tool-loop (generationChanged && leaf is toolResult), skip resuming
+    // the dead in-flight MCP round-trip and start a fresh cascade with full priorHistory.
+    const skipResumeOnDeadToolLoop = generationChanged && leafEntry?.role === "toolResult";
+    if (!cascade && binding?.cascadeId && !skipResumeOnDeadToolLoop) {
       try {
         cascade = await client.resumeCascade(binding.cascadeId);
         this.seedResumedCascade(cascade);
         this.attachListeners(cascade);
-        this.activeCascades.set(sessionId, cascade);
+        this.activeCascades.set(sessionId, { cascade, generation: currentGen });
       } catch (e: any) {
         if (this.verbose) {
-          console.error(`[CascadeManager] Could not resume cascade ${binding.cascadeId}: ${e.message}`);
+          console.error(
+            `[CascadeManager] Could not resume cascade ${binding.cascadeId}: ${e.message}. Starting fresh with full prior history.`
+          );
         }
         cascade = null;
       }
@@ -272,7 +298,7 @@ export class CascadeManager {
               metadata: {
                 apiKey: (client as any).apiKey || "",
                 ideName: "vscode",
-                ideVersion: "1.107.0",
+                ideVersion: ANTIGRAVITY_IDE_VERSION,
                 extensionName: "antigravity",
                 extensionVersion: "0.2.0",
               },
@@ -329,7 +355,7 @@ export class CascadeManager {
               cascade = await client.resumeCascade(binding.cascadeId);
               this.seedResumedCascade(cascade);
               this.attachListeners(cascade);
-              this.activeCascades.set(sessionId, cascade);
+              this.activeCascades.set(sessionId, { cascade, generation: currentGen });
             } catch (resumeErr: any) {
               if (this.verbose) {
                 console.error(`[CascadeManager] Failed to resume cascade after revert: ${resumeErr.message}`);
@@ -357,8 +383,11 @@ export class CascadeManager {
       cascade = await client.startCascade();
 
       // A brand new Cascade has an empty trajectory, so everything that happened
-      // before this turn has to be carried in the prompt.
-      const priorHistory = ctx.priorHistory ?? "";
+      // before this turn has to be carried in the prompt. (D-03)
+      const priorHistory =
+        ctx.priorHistory !== undefined
+          ? ctx.priorHistory
+          : resolvePriorHistory(branch as any).priorHistory;
 
       this.bindingStore.set(sessionId, {
         cascadeId: cascade.cascadeId,
@@ -368,14 +397,14 @@ export class CascadeManager {
       });
 
       this.attachListeners(cascade);
-      this.activeCascades.set(sessionId, cascade);
+      this.activeCascades.set(sessionId, { cascade, generation: currentGen });
 
-      return { cascade, priorHistory };
+      return { cascade, priorHistory, isFreshCascade: true };
     }
 
     // Reusing a Cascade: its own trajectory already holds every turn it produced, so
     // only the history it never saw (captured when it was created) is re-asserted.
-    return { cascade, priorHistory: binding?.priorHistory ?? "" };
+    return { cascade, priorHistory: binding?.priorHistory ?? "", isFreshCascade: false };
   }
 
   /**
@@ -441,7 +470,7 @@ export class CascadeManager {
     const old = this.activeCascades.get(sessionId);
     if (old) {
       try {
-        old.dispose();
+        old.cascade.dispose();
       } catch {
         // ignore
       }
@@ -634,7 +663,7 @@ export class CascadeManager {
   }
 
   getActiveCascade(sessionId: string): Cascade | undefined {
-    return this.activeCascades.get(sessionId);
+    return this.activeCascades.get(sessionId)?.cascade;
   }
 
   /**
@@ -642,7 +671,7 @@ export class CascadeManager {
    * deterministically forcing LS into `idle` state. (D-03)
    */
   async cancelCascade(sessionId: string): Promise<void> {
-    const cascade = this.activeCascades.get(sessionId);
+    const cascade = this.getActiveCascade(sessionId);
     if (!cascade) return;
 
     try {

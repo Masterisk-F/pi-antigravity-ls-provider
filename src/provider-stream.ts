@@ -58,7 +58,7 @@ export function formatConversationHistory(
 
   for (const msg of messages) {
     if (msg.role === "user") {
-      const text = contentText(msg.content as any, "").trim();
+      const text = msg.content != null ? contentText(msg.content as any, "").trim() : "";
       if (text) parts.push(`[User]: ${text}`);
       continue;
     }
@@ -83,7 +83,7 @@ export function formatConversationHistory(
     }
 
     if (msg.role === "toolResult") {
-      const text = contentText(msg.content as any, "").trim();
+      const text = msg.content != null ? contentText(msg.content as any, "").trim() : "";
       if (!text) continue;
       const truncated =
         text.length > TOOL_RESULT_MAX_CHARS
@@ -239,6 +239,9 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         return;
       }
 
+      let isDone = false;
+      let cleanupListeners: () => void = () => {};
+
       try {
         await options?.onResponse?.({ status: 200, headers: {} }, model);
         stream.push({ type: "start", partial: message });
@@ -294,7 +297,6 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         // 2. Prepare listeners BEFORE sending user message to eliminate any event-loss races (D-05)
         let textBlock: TextContent | null = null;
         let thinkingBlock: ThinkingContent | null = null;
-        let isDone = false;
         let hasStarted = false;
         let timeoutTimer: NodeJS.Timeout | null = null;
 
@@ -321,7 +323,7 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           timeoutTimer?.unref?.();
         };
 
-        const cleanupListeners = () => {
+        cleanupListeners = () => {
           clearTurnTimeout();
           cascade.off("text", onText);
           cascade.off("thinking", onThinking);
@@ -329,6 +331,27 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           cascade.off("stepNew", onStepNew);
           roundTrip.off("park", onPark);
           signal?.removeEventListener("abort", onAbort);
+          (lsConnection as any).off?.("exit", onLsExit);
+          (lsConnection as any).off?.("disconnect", onLsExit);
+        };
+
+        const onLsExit = (info?: { code?: number | null; signal?: string | null }) => {
+          if (isDone) return;
+          if (verbose) {
+            console.error(
+              `[provider-stream] LS process exit/disconnect detected during turn: code=${info?.code}, signal=${info?.signal}`
+            );
+          }
+          isDone = true;
+          cleanupListeners();
+          cascade.cancel().catch(() => {});
+          roundTrip.abortAll("Antigravity LS process exited unexpectedly");
+          message.stopReason = "error";
+          message.errorMessage = `Antigravity LS process exited unexpectedly${
+            info?.code !== undefined ? ` (code=${info?.code}, signal=${info?.signal})` : "."
+          }`;
+          stream.push({ type: "error", reason: "error", error: message });
+          stream.end(message);
         };
 
         const onAbort = () => {
@@ -615,6 +638,8 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         cascade.on("statusChange", onStatusChange);
         cascade.on("stepNew", onStepNew);
         roundTrip.on("park", onPark);
+        (lsConnection as any).once?.("exit", onLsExit);
+        (lsConnection as any).once?.("disconnect", onLsExit);
 
         // Deliver tool results to Language Server now that all listeners are active (D-01):
         // 1. Flush any results staged by pi.on("tool_result")
@@ -633,10 +658,19 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           }
         }
 
-        // 3. Collect new user messages in the current turn and send prompts sequentially (D-01, D-02, D-03)
+        // 3. Collect new user messages in the current turn and send prompts sequentially (D-01, D-02, D-03).
+        // If this is a tool-continuation turn (userTexts empty) AND a brand new Cascade was created
+        // (e.g. LS restarted mid-tool-loop or external provider switch), dispatch a continuation prompt
+        // so the fresh Cascade receives cascadeConfig (including full priorHistory) and resumes work.
         const userTexts = extractTurnUserPrompts(context.messages as any);
+        const promptsToSend =
+          userTexts.length > 0
+            ? userTexts
+            : turn.isFreshCascade
+              ? ["Continue based on the tool execution results above."]
+              : [];
 
-        if (userTexts.length > 0) {
+        if (promptsToSend.length > 0) {
           const client = await lsConnection.ensureClient();
 
           // Ensure MCP server is properly registered in config before dispatching prompts (D-01: Self-Healing)
@@ -668,11 +702,12 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
           }) as any;
 
           // Send each user message sequentially to create distinct USER_INPUT steps in the trajectory (D-03)
-          for (let i = 0; i < userTexts.length; i++) {
-            const prompt = userTexts[i];
+          for (let i = 0; i < promptsToSend.length; i++) {
+            if (isDone) break;
+            const prompt = promptsToSend[i];
             if (verbose) {
               console.error(
-                `[provider-stream] Sending message ${i + 1}/${userTexts.length} to cascade ${cascade.cascadeId}: ${prompt.slice(0, 60)}...`
+                `[provider-stream] Sending message ${i + 1}/${promptsToSend.length} to cascade ${cascade.cascadeId}: ${prompt.slice(0, 60)}...`
               );
             }
 
@@ -737,6 +772,9 @@ export function createStreamSimple(deps: ProviderStreamDeps) {
         }
 
       } catch (err: any) {
+        cleanupListeners();
+        if (isDone) return;
+        isDone = true;
         message.stopReason = "error";
         message.errorMessage = err?.message || String(err);
         stream.push({ type: "error", reason: "error", error: message });
