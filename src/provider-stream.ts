@@ -46,23 +46,15 @@ const TOOL_RESULT_MAX_CHARS = 4000;
 const DEFAULT_SYSTEM_PROMPT =
   "You are an expert AI software engineer operating as a coding agent.";
 
-const PI_DEFAULT_PREAMBLES = new Set([
-  // pi v1.4.0 default preamble
-  "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
-  // pi v1.5.0 default preamble
-  "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.",
-]);
-
 export const NORMALIZED_PREAMBLE =
   "You are an expert coding assistant. You help users by reading files, executing commands, editing code, and writing new files.";
 
 /**
  * Resolves the effective system prompt from transcript messages.
  *
- * When pi's structured `sections.preamble` matches one of pi's built-in default
- * preambles, only `sections.preamble` is replaced with {@link NORMALIZED_PREAMBLE}
- * so custom preambles and all other sections (e.g. tools, rules, project_context)
- * remain untouched.
+ * When pi's structured `sections.preamble` is present, replaces `sections.preamble`
+ * directly with {@link NORMALIZED_PREAMBLE} while keeping all other sections
+ * (e.g. tools, rules, project_context) and plain content-only prompts untouched.
  */
 export function extractSystemPrompt(
   messages: readonly { role: string; content?: any; sections?: Record<string, string | null | undefined>; [key: string]: any }[]
@@ -71,8 +63,7 @@ export function extractSystemPrompt(
   try {
     const systemMsg = getCurrentSystemMessage(messages as any);
     if (systemMsg) {
-      const preamble = systemMsg.sections?.preamble;
-      if (typeof preamble === "string" && PI_DEFAULT_PREAMBLES.has(preamble)) {
+      if (typeof systemMsg.sections?.preamble === "string") {
         const patchedMsg = {
           ...systemMsg,
           sections: {
