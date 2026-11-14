@@ -24,23 +24,58 @@ export interface SessionBinding {
 
 export class BindingStore {
   private baseDir: string;
+  private readonly inMemory: boolean;
+  private readonly memoryStore = new Map<string, string>();
+
+  static inMemory(): BindingStore {
+    return new BindingStore(":memory:");
+  }
 
   constructor(customPath?: string) {
-    if (!customPath) {
-      this.baseDir = path.join(os.homedir(), ".pi", "agent", "pi-antigravity-ls", "sessions");
-    } else if (customPath.endsWith(".json")) {
-      this.baseDir = path.dirname(customPath);
+    if (customPath === ":memory:") {
+      this.inMemory = true;
+      this.baseDir = ":memory:";
     } else {
-      this.baseDir = customPath;
+      this.inMemory = false;
+      if (!customPath) {
+        this.baseDir = path.join(os.homedir(), ".pi", "agent", "pi-antigravity-ls", "sessions");
+      } else if (customPath.endsWith(".json")) {
+        this.baseDir = path.dirname(customPath);
+      } else {
+        this.baseDir = customPath;
+      }
     }
   }
 
   getSessionFilePath(sessionId: string): string {
     const safeId = sessionId.replace(/[^a-zA-Z0-9._-]/g, "_") || "default";
+    if (this.inMemory) {
+      return `:memory:/${safeId}.json`;
+    }
     return path.join(this.baseDir, `${safeId}.json`);
   }
 
   get(sessionId: string): SessionBinding | undefined {
+    if (this.inMemory) {
+      const raw = this.memoryStore.get(sessionId);
+      if (!raw) return undefined;
+      try {
+        const parsed = JSON.parse(raw);
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          typeof parsed.cascadeId === "string" &&
+          typeof parsed.steps === "object" &&
+          parsed.steps !== null
+        ) {
+          return parsed as SessionBinding;
+        }
+      } catch {
+        return undefined;
+      }
+      return undefined;
+    }
+
     const filePath = this.getSessionFilePath(sessionId);
     try {
       if (fs.existsSync(filePath)) {
@@ -63,18 +98,50 @@ export class BindingStore {
   }
 
   set(sessionId: string, binding: SessionBinding): void {
+    const serialized = JSON.stringify(binding, null, 2);
+
+    if (this.inMemory) {
+      this.memoryStore.set(sessionId, serialized);
+      return;
+    }
+
     const filePath = this.getSessionFilePath(sessionId);
+    let tmpPath: string | null = null;
     try {
+      if (fs.existsSync(filePath)) {
+        try {
+          const existing = fs.readFileSync(filePath, "utf8");
+          if (existing === serialized) {
+            return;
+          }
+        } catch {
+          // If read fails, proceed to overwrite
+        }
+      }
+
       fs.mkdirSync(this.baseDir, { recursive: true });
-      const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-      fs.writeFileSync(tmpPath, JSON.stringify(binding, null, 2), "utf8");
+      tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tmpPath, serialized, "utf8");
       fs.renameSync(tmpPath, filePath);
+      tmpPath = null;
     } catch (e: any) {
+      if (tmpPath && fs.existsSync(tmpPath)) {
+        try {
+          fs.unlinkSync(tmpPath);
+        } catch {
+          // ignore
+        }
+      }
       console.error(`[BindingStore] Failed to save binding to ${filePath}:`, e.message);
     }
   }
 
   remove(sessionId: string): void {
+    if (this.inMemory) {
+      this.memoryStore.delete(sessionId);
+      return;
+    }
+
     const filePath = this.getSessionFilePath(sessionId);
     try {
       if (fs.existsSync(filePath)) {
@@ -86,6 +153,11 @@ export class BindingStore {
   }
 
   clear(): void {
+    if (this.inMemory) {
+      this.memoryStore.clear();
+      return;
+    }
+
     try {
       if (!fs.existsSync(this.baseDir)) return;
       for (const entry of fs.readdirSync(this.baseDir)) {

@@ -14,7 +14,7 @@ const HAS_LS_BINARY = fs.existsSync("/opt/Antigravity/resources/bin/language_ser
 describe("Multi-Tool Sequential Dispatch & Deadlock Prevention Integration (D-01)", { skip: !HAS_LS_BINARY }, () => {
   it("stages tool results during inter-turn gap and flushes upon stream listener attachment without event loss", async () => {
     const roundTrip = new RoundTrip();
-    const bindingStore = new BindingStore("/tmp/test-bindings-multi-deadlock.json");
+    const bindingStore = BindingStore.inMemory();
     const modelCatalog = new ModelCatalog();
 
     const mockTools = [
@@ -131,17 +131,12 @@ describe("Multi-Tool Sequential Dispatch & Deadlock Prevention Integration (D-01
       cascadeManager.clearAll();
       await mcpServer.stop();
       await lsConnection.stop();
-      try {
-        fs.unlinkSync("/tmp/test-bindings-multi-deadlock.json");
-      } catch {
-        // ignore
-      }
     }
   });
 
   it("flushes staged terminating tool results during agent_settled before cascade cancellation", async () => {
     const roundTrip = new RoundTrip();
-    const bindingStore = new BindingStore("/tmp/test-bindings-settled.json");
+    const bindingStore = BindingStore.inMemory();
     const modelCatalog = new ModelCatalog();
 
     const mockTools = [
@@ -234,11 +229,6 @@ describe("Multi-Tool Sequential Dispatch & Deadlock Prevention Integration (D-01
       cascadeManager.clearAll();
       await mcpServer.stop();
       await lsConnection.stop();
-      try {
-        fs.unlinkSync("/tmp/test-bindings-settled.json");
-      } catch {
-        // ignore
-      }
     }
   });
 });

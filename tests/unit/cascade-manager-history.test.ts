@@ -1,8 +1,5 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { EventEmitter } from "node:events";
 import { CascadeManager } from "../../src/cascade-manager.js";
 import { BindingStore } from "../../src/bindings.js";
@@ -79,8 +76,7 @@ function createFakeClient(): { client: FakeClient; started: FakeCascade[]; resum
 }
 
 function createBindingStore(): BindingStore {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agls-history-"));
-  return new BindingStore(dir);
+  return BindingStore.inMemory();
 }
 
 function ctx(overrides: Record<string, any> = {}) {

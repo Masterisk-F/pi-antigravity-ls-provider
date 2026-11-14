@@ -1,8 +1,5 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { EventEmitter } from "node:events";
 import { CascadeManager } from "../../src/cascade-manager.js";
 import { BindingStore } from "../../src/bindings.js";
@@ -67,8 +64,7 @@ function createFakeClient(): { client: FakeClient; started: FakeCascade[]; rever
 }
 
 function createBindingStore(): BindingStore {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agls-rewind-test-"));
-  return new BindingStore(path.join(dir, "bindings.json"));
+  return BindingStore.inMemory();
 }
 
 describe("CascadeManager Rewind Accuracy (Unit - D-01)", () => {

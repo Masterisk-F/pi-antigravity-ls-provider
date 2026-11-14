@@ -1,8 +1,6 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert";
 import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { LsConnection } from "../../src/ls-connection.js";
 import { CascadeManager } from "../../src/cascade-manager.js";
 import { BindingStore } from "../../src/bindings.js";
@@ -13,8 +11,7 @@ import { McpBridgeServer } from "../../src/tool-bridge/mcp-server.js";
 
 describe("Live Antigravity LS Rewind Accuracy & Stability (E2E)", { timeout: 90000 }, () => {
   it("accurately rewinds to Turn 1 so model forgets Turn 2 and answers without error or hang", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agls-e2e-rewind-"));
-    const bindingStore = new BindingStore(path.join(tmpDir, "bindings.json"));
+    const bindingStore = BindingStore.inMemory();
     const roundTrip = new RoundTrip();
 
     const mcpServer = new McpBridgeServer({
@@ -119,8 +116,7 @@ describe("Live Antigravity LS Rewind Accuracy & Stability (E2E)", { timeout: 900
   });
 
   it("rewinds to intermediate toolResult in multi-tool turn so model forgets second tool result (Section 6.2c)", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agls-e2e-midtool-"));
-    const bindingStore = new BindingStore(path.join(tmpDir, "bindings.json"));
+    const bindingStore = BindingStore.inMemory();
     const roundTrip = new RoundTrip();
 
     const mockTools = [

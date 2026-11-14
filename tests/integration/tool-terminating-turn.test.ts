@@ -14,7 +14,7 @@ const HAS_LS_BINARY = fs.existsSync("/opt/Antigravity/resources/bin/language_ser
 describe("Terminating Tool Turn & Subsequent Prompt Integration", { skip: !HAS_LS_BINARY }, () => {
   it("resolves terminating tool call, cancels invocation on settle, and cleanly executes subsequent user turn", async () => {
     const roundTrip = new RoundTrip();
-    const bindingStore = new BindingStore();
+    const bindingStore = BindingStore.inMemory();
     const modelCatalog = new ModelCatalog();
 
     const mockTools = [

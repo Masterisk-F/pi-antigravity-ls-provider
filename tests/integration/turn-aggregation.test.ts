@@ -14,7 +14,7 @@ const HAS_LS_BINARY = fs.existsSync("/opt/Antigravity/resources/bin/language_ser
 describe("Sequential User Messages Integration", { skip: !HAS_LS_BINARY }, () => {
   it("sequentially dispatches user prompts so Language Server receives both user input and framing", async () => {
     const roundTrip = new RoundTrip();
-    const bindingStore = new BindingStore();
+    const bindingStore = BindingStore.inMemory();
     const modelCatalog = new ModelCatalog();
 
     const mcpServer = new McpBridgeServer({

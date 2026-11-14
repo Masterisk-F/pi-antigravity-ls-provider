@@ -14,7 +14,7 @@ const HAS_LS_BINARY = fs.existsSync("/opt/Antigravity/resources/bin/language_ser
 describe("Model Switch Gemini -> Claude Multi-Tool E2E", { skip: !HAS_LS_BINARY }, () => {
   it("switches from Gemini 3.8 Flash to Claude Sonnet 5.5 and executes parallel tool calls without hanging", async () => {
     const roundTrip = new RoundTrip();
-    const bindingStore = new BindingStore("/tmp/test-bindings-model-switch-e2e.json");
+    const bindingStore = BindingStore.inMemory();
     const modelCatalog = new ModelCatalog();
 
     const mockTools = [
@@ -165,11 +165,6 @@ describe("Model Switch Gemini -> Claude Multi-Tool E2E", { skip: !HAS_LS_BINARY 
       cascadeManager.clearAll();
       await mcpServer.stop();
       await lsConnection.stop();
-      try {
-        fs.unlinkSync("/tmp/test-bindings-model-switch-e2e.json");
-      } catch {
-        // ignore
-      }
     }
   });
 });

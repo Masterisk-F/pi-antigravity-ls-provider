@@ -16,7 +16,8 @@ const HAS_LS_BINARY = fs.existsSync("/opt/Antigravity/resources/bin/language_ser
 describe("Live Antigravity LS Process Restart & Session Resume (E2E)", { skip: !HAS_LS_BINARY, timeout: 120000 }, () => {
   it("persists sessions across process restarts, resumes native cascade, executes tools without ghost replay, and rewinds cleanly", async () => {
     const tmpSessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), "agls-resume-e2e-"));
-    const modelCatalog = new ModelCatalog();
+    try {
+      const modelCatalog = new ModelCatalog();
     const modelDef: any = {
       id: "antigravity-ls/gemini-3.8-flash",
       api: "antigravity-ls",
@@ -223,6 +224,15 @@ describe("Live Antigravity LS Process Restart & Session Resume (E2E)", { skip: !
       cascadeManager.clearAll();
       await mcpServer.stop();
       await lsConnection.stop();
+    }
+    } finally {
+      try {
+        if (fs.existsSync(tmpSessionsDir)) {
+          fs.rmSync(tmpSessionsDir, { recursive: true, force: true });
+        }
+      } catch {
+        // ignore
+      }
     }
   });
 });

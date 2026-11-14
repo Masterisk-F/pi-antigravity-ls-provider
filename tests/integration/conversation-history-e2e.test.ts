@@ -1,8 +1,6 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert";
 import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { LsConnection } from "../../src/ls-connection.js";
 import { McpBridgeServer } from "../../src/tool-bridge/mcp-server.js";
 import { RoundTrip } from "../../src/tool-bridge/round-trip.js";
@@ -20,9 +18,7 @@ const HAS_LS_BINARY = fs.existsSync("/opt/Antigravity/resources/bin/language_ser
 describe("Cross-provider conversation history (E2E)", { skip: !HAS_LS_BINARY }, () => {
   it("replays Claude turns and tool results into a Gemini session", async () => {
     const roundTrip = new RoundTrip();
-    const bindingStore = new BindingStore(
-      path.join(fs.mkdtempSync(path.join(os.tmpdir(), "agls-e2e-")), "bindings.json")
-    );
+    const bindingStore = BindingStore.inMemory();
     const modelCatalog = new ModelCatalog();
 
     const mcpServer = new McpBridgeServer({ toolsProvider: () => [], roundTrip });

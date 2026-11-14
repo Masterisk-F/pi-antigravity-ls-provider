@@ -3,9 +3,6 @@ import * as assert from "node:assert";
 import { EventEmitter } from "node:events";
 import { CascadeManager } from "../../src/cascade-manager.js";
 import { BindingStore } from "../../src/bindings.js";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 
 class MockCascade extends EventEmitter {
   constructor(public readonly cascadeId: string) {
@@ -27,8 +24,7 @@ class MockCascade extends EventEmitter {
 
 describe("Rewind Full Flow Integration", () => {
   it("executes Turn 1 -> Turn 2 -> Rewind to Turn 1 -> Turn 3 with accurate step rollback", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agls-full-rewind-"));
-    const store = new BindingStore(path.join(tmpDir, "bindings.json"));
+    const store = BindingStore.inMemory();
 
     const cascade = new MockCascade("casc-flow-1");
     const revertCalls: any[] = [];
@@ -119,8 +115,7 @@ describe("Rewind Full Flow Integration", () => {
   });
 
   it("handles multi-tool turn -> /tree navigation to intermediate TR1 -> rolls back to TR1 step index cleanly (Section 6.2b)", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agls-multitool-rewind-"));
-    const store = new BindingStore(path.join(tmpDir, "bindings.json"));
+    const store = BindingStore.inMemory();
 
     const cascade = new MockCascade("casc-flow-2");
     const revertCalls: any[] = [];
