@@ -6,7 +6,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
-import { LsConnection } from "./ls-connection.js";
+import { LS_HEALTH_CHECK_TIMEOUT_MS, LsConnection } from "./ls-connection.js";
 import { RoundTrip } from "./tool-bridge/round-trip.js";
 import { McpBridgeServer } from "./tool-bridge/mcp-server.js";
 import { CascadeManager } from "./cascade-manager.js";
@@ -172,7 +172,10 @@ export default async function (pi: ExtensionAPI) {
       const client = lsConnection.getClient();
       if (client) {
         try {
-          const userStatus = await client.getUserStatus();
+          const userStatus = await client.lsClient.getUserStatus(
+            {},
+            { timeoutMs: LS_HEALTH_CHECK_TIMEOUT_MS }
+          );
           const us = userStatus.userStatus as any;
           lsStatus = `Connected (Email: ${us?.email || "N/A"}, Tier: ${us?.userTier?.name || "N/A"})`;
         } catch (e: any) {
