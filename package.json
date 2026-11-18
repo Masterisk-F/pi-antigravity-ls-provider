@@ -1,25 +1,54 @@
 {
   "name": "pi-antigravity-ls-provider",
   "version": "0.1.0",
-  "description": "Antigravity Language Server direct provider extension for pi-coding-agent",
+  "description": "pi provider extension driving the Antigravity Language Server directly (no agy/ACP): all pi tools exposed via MCP, Antigravity built-in tools disabled, pi-tree-aware conversation rewind",
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension",
+    "provider",
+    "antigravity"
+  ],
+  "license": "MIT",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --test dist/**/*.test.js"
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && tsc -p tests/tsconfig.json && node --test --test-concurrency=1 dist/tests/unit/*.test.js dist/tests/integration/*.test.js"
   },
   "dependencies": {
     "antigravity-client": "github:jkfujinami/antigravity-client#abb4afc2e9d1316b2b1b24eba9e62a0298399851"
-  },
-  "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^1.4.0",
-    "@types/node": "^22.0.0",
-    "typescript": "^5.8.0"
   },
   "allowScripts": {
     "better-sqlite3@12.11.1": true,
     "node-pty@1.1.0": true,
     "github:jkfujinami/antigravity-client#abb4afc2e9d1316b2b1b24eba9e62a0298399851": true
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^22.0.0",
+    "typescript": "^6.0.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": false
+    }
   }
 }

@@ -1,0 +1,204 @@
+/**
+ * pi-antigravity-ls-provider: Extension Entry Point
+ *
+ * Connects pi directly to Antigravity Language Server (official binary) via ConnectRPC.
+ * Runs in complete process and directory isolation per pi instance.
+ */
+
+import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
+import { LS_HEALTH_CHECK_TIMEOUT_MS, LsConnection } from "./ls-connection.js";
+import { RoundTrip } from "./tool-bridge/round-trip.js";
+import { McpBridgeServer } from "./tool-bridge/mcp-server.js";
+import { CascadeManager } from "./cascade-manager.js";
+import { ModelCatalog } from "./models.js";
+import { createStreamSimple } from "./provider-stream.js";
+import { BindingStore } from "./bindings.js";
+
+/**
+ * Returns only the tools pi currently declares to the model (`pi.getActiveTools()`).
+ * `pi.getAllTools()` also lists registered-but-inactive tools (grep, ls, find, powershell,
+ * deferred MCP tools, ...) which the model must never be offered over MCP.
+ */
+export function getActivePiTools(
+  pi: Pick<ExtensionAPI, "getAllTools" | "getActiveTools">
+): ToolInfo[] {
+  const activeNames = new Set(pi.getActiveTools());
+  return pi.getAllTools().filter((tool) => activeNames.has(tool.name));
+}
+
+export interface DoctorReportParams {
+  lsStatus: string;
+  serverUrl: string;
+  serverName: string;
+  listeningPort: number;
+  modelsCount: number;
+  cascadeId?: string | null;
+}
+
+export function buildDoctorReport(params: DoctorReportParams): string {
+  return [
+    "=== Antigravity LS Provider Doctor ===",
+    `LS Status:     ${params.lsStatus}`,
+    `MCP Server:    ${params.serverUrl} (Key: ${params.serverName}, Port: ${params.listeningPort})`,
+    `Loaded Models: ${params.modelsCount} models`,
+    `Active Cascade: ${params.cascadeId || "(none yet)"}`,
+    "",
+    "Commands:",
+    "  /agls          - Show this status",
+    "  /agls clear    - Reset cascade binding for current session",
+    "  /agls clear-all- Reset all session cascade bindings",
+  ].join("\n");
+}
+
+export default async function (pi: ExtensionAPI) {
+  const roundTrip = new RoundTrip();
+  const bindingStore = new BindingStore();
+
+  const mcpServer = new McpBridgeServer({
+    toolsProvider: () => getActivePiTools(pi),
+    roundTrip,
+    verbose: false,
+  });
+
+  const lsConnection = new LsConnection({
+    workspacePath: process.cwd(),
+    mcpServer,
+    verbose: false,
+  });
+
+  const modelCatalog = new ModelCatalog();
+  const cascadeManager = new CascadeManager(lsConnection, bindingStore, false);
+
+  // Start MCP HTTP bridge server (listens on random available port)
+  try {
+    await mcpServer.start();
+  } catch (e: any) {
+    console.error(`[antigravity-ls] Failed to start MCP bridge:`, e.message);
+  }
+
+  const models = modelCatalog.getModels();
+
+  const streamSimple = createStreamSimple({
+    lsConnection,
+    cascadeManager,
+    roundTrip,
+    modelCatalog,
+    mcpServer,
+    verbose: false,
+  });
+
+  pi.registerProvider("antigravity-ls", {
+    name: "Antigravity LS",
+    baseUrl: "http://127.0.0.1",
+    apiKey: "antigravity-ls",
+    api: "antigravity-ls" as any,
+    models: models as any,
+    streamSimple,
+  });
+
+  // ── Tool execution lifecycle ──
+  // Stage tool execution results in RoundTrip rather than resolving immediately (D-01).
+  // This defers HTTP 200 delivery to Language Server until the continuation streamSimple
+  // stream has attached all its event listeners, eliminating race conditions on sequential tool calls.
+  pi.on("tool_result", async (event: any) => {
+    if (event?.toolCallId) {
+      roundTrip.stageResult(event.toolCallId, event);
+    }
+  });
+
+  // ── Agent settlement lifecycle ──
+  // When Pi's agent run has fully settled and becomes idle (e.g. after a terminating tool
+  // like plannotator_submit_plan, or user abort):
+  // 1. Flush any remaining staged tool results so terminating tools deliver HTTP 200 to LS. (D-01)
+  // 2. Abort any unhandled parked calls.
+  // 3. Deterministically cancel the Language Server invocation into `status: idle`.
+  pi.on("agent_settled", async (_event: any, ctx: ExtensionContext) => {
+    roundTrip.flushStagedResults();
+    roundTrip.abortAll("Agent settled");
+    const sessionId = ctx.sessionManager.getSessionId();
+    await cascadeManager.cancelCascade(sessionId);
+  });
+
+  // ── Session hooks ──
+  pi.on("session_start", async (_event: unknown, ctx: ExtensionContext) => {
+    if (ctx.cwd) {
+      lsConnection.setWorkspacePath(ctx.cwd);
+    }
+    mcpServer.registerInMcpConfig();
+    const client = lsConnection.getClient();
+    if (client) {
+      try {
+        await client.refreshMcpServers();
+      } catch {
+        // ignore
+      }
+    }
+  });
+
+  pi.on("session_shutdown", async () => {
+    cascadeManager.disposeAll();
+    await mcpServer.stop();
+    await lsConnection.stop();
+  });
+
+  // Handle process exit for one-shot mode (pi -p)
+  process.on("beforeExit", () => {
+    cascadeManager.disposeAll();
+    mcpServer.stop().catch(() => {});
+    lsConnection.stop().catch(() => {});
+  });
+
+  // ── CLI Command: /agls ──
+  pi.registerCommand("agls", {
+    description: "Antigravity LS provider status and diagnostics",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const sub = args.trim().toLowerCase();
+
+      if (sub === "clear") {
+        const sessionId = ctx.sessionManager.getSessionId();
+        cascadeManager.clearSession(sessionId);
+        ctx.ui?.notify?.("Cleared Antigravity cascade binding for this session.", "info");
+        return;
+      }
+
+      if (sub === "clear-all") {
+        cascadeManager.clearAll();
+        ctx.ui?.notify?.("Cleared all Antigravity cascade bindings.", "info");
+        return;
+      }
+
+      // Default: doctor / status
+      let lsStatus = "Not connected";
+      const client = lsConnection.getClient();
+      if (client) {
+        try {
+          const userStatus = await client.lsClient.getUserStatus(
+            {},
+            { timeoutMs: LS_HEALTH_CHECK_TIMEOUT_MS }
+          );
+          const us = userStatus.userStatus as any;
+          lsStatus = `Connected (Email: ${us?.email || "N/A"}, Tier: ${us?.userTier?.name || "N/A"})`;
+        } catch (e: any) {
+          lsStatus = `Error: ${e.message}`;
+        }
+      }
+
+      const activeBinding = bindingStore.get(ctx.sessionManager.getSessionId());
+
+      const report = buildDoctorReport({
+        lsStatus,
+        serverUrl: mcpServer.serverUrl,
+        serverName: mcpServer.serverName,
+        listeningPort: mcpServer.listeningPort,
+        modelsCount: models.length,
+        cascadeId: activeBinding?.cascadeId,
+      });
+
+      if (ctx.ui?.notify) {
+        ctx.ui.notify(report, "info");
+      } else {
+        console.log(report);
+      }
+    },
+  });
+}
